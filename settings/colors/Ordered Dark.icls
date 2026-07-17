@@ -1,0 +1,45 @@
+<scheme name="Ordered Dark" version="142" parent_scheme="Islands Dark">
+  <metaInfo>
+    <property name="ide">idea</property>
+    <property name="ideVersion">2026.1.4.0</property>
+    <property name="originalScheme">Islands Dark</property>
+  </metaInfo>
+  <option name="EDITOR_FONT_SIZE" value="14" />
+  <option name="EDITOR_FONT_NAME" value="JetBrains Mono" />
+  <option name="LINE_SPACING" value="1.2" />
+  <option name="CONSOLE_FONT_SIZE" value="14" />
+  <option name="CONSOLE_FONT_NAME" value="JetBrains Mono" />
+  <option name="CONSOLE_LINE_SPACING" value="1.15" />
+  <colors>
+    <option name="CARET_COLOR" value="D7DAE0" />
+    <option name="CARET_ROW_COLOR" value="20242A" />
+    <option name="CONSOLE_BACKGROUND_KEY" value="17191C" />
+    <option name="INDENT_GUIDE" value="343A42" />
+    <option name="LINE_NUMBERS_COLOR" value="596273" />
+    <option name="LINE_NUMBER_ON_CARET_ROW_COLOR" value="B6BBC5" />
+    <option name="MATCHED_BRACES_INDENT_GUIDE_COLOR" value="607086" />
+    <option name="RIGHT_MARGIN_COLOR" value="38414A" />
+    <option name="SELECTED_INDENT_GUIDE" value="607086" />
+    <option name="WHITESPACES" value="515B69" />
+  </colors>
+  <attributes>
+    <option name="IDENTIFIER_UNDER_CARET_ATTRIBUTES">
+      <value>
+        <option name="BACKGROUND" value="2A3742" />
+        <option name="ERROR_STRIPE_COLOR" value="527086" />
+      </value>
+    </option>
+    <option name="TEXT">
+      <value>
+        <option name="FOREGROUND" value="C3C7CE" />
+        <option name="BACKGROUND" value="17191C" />
+      </value>
+    </option>
+    <option name="WRITE_IDENTIFIER_UNDER_CARET_ATTRIBUTES">
+      <value>
+        <option name="BACKGROUND" value="3A3038" />
+        <option name="ERROR_STRIPE_COLOR" value="9C667E" />
+      </value>
+    </option>
+  </attributes>
+</scheme>

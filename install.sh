@@ -3,6 +3,7 @@ set -euo pipefail
 
 REPOSITORY_RAW_URL="https://raw.githubusercontent.com/lizhicheng00/file/main"
 MANAGED_FILES=(
+  "options/laf.xml"
   "options/ui.lnf.xml"
   "options/editor.xml"
   "options/colors.scheme.xml"

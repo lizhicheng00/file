@@ -2,6 +2,7 @@
 set -euo pipefail
 
 MANAGED_FILES=(
+  "options/laf.xml"
   "options/ui.lnf.xml"
   "options/editor.xml"
   "options/colors.scheme.xml"

@@ -1,61 +1,57 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
-    [string]$Backup,
-    [switch]$Force
+    [string]$Backup
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-$ManagedFiles = @(
-    "options/laf.xml",
-    "options/ui.lnf.xml",
-    "options/editor.xml",
-    "options/colors.scheme.xml",
-    "colors/Ordered Dark.icls"
-)
-
-function Stop-WithError([string]$Message) {
+function Fail([string]$Message) {
     Write-Error $Message
     exit 1
 }
 
-if (-not $Force) {
-    $RunningIdea = Get-Process -ErrorAction SilentlyContinue |
-        Where-Object { $_.ProcessName -in @("idea64", "idea") }
-    if ($RunningIdea) {
-        Stop-WithError "IntelliJ IDEA is running. Close it completely and retry."
-    }
+$RunningIdea = Get-Process -ErrorAction SilentlyContinue |
+    Where-Object { $_.ProcessName -in @("idea64", "idea") }
+if ($RunningIdea) {
+    Fail "IntelliJ IDEA is running. Close it completely, then run this script again."
 }
 
 $Backup = [System.IO.Path]::GetFullPath($Backup)
-$TargetFile = Join-Path $Backup ".target-dir"
-if (-not (Test-Path -LiteralPath $TargetFile -PathType Leaf)) {
-    Stop-WithError "Invalid backup directory: $Backup"
+$TargetRecord = Join-Path $Backup ".target-dir"
+if (-not (Test-Path -LiteralPath $TargetRecord -PathType Leaf)) {
+    Fail "Invalid backup directory: $Backup"
 }
 
-$Target = (Get-Content -LiteralPath $TargetFile -TotalCount 1).Trim()
+$Target = (Get-Content -LiteralPath $TargetRecord -TotalCount 1).Trim()
 if (-not (Test-Path -LiteralPath $Target -PathType Container)) {
-    Stop-WithError "Original IDEA config directory does not exist: $Target"
+    Fail "Original IDEA config directory was not found: $Target"
 }
 
-$CreatedFilesPath = Join-Path $Backup ".created-files"
+$ManagedFiles = @(
+    "options/laf.xml",
+    "options/colors.scheme.xml",
+    "colors/Ordered Dark.icls",
+    "colors/OrderedDark.icls"
+)
+
 $CreatedFiles = @()
-if (Test-Path -LiteralPath $CreatedFilesPath -PathType Leaf) {
-    $CreatedFiles = @(Get-Content -LiteralPath $CreatedFilesPath)
+$CreatedRecord = Join-Path $Backup ".created-files"
+if (Test-Path -LiteralPath $CreatedRecord -PathType Leaf) {
+    $CreatedFiles = @(Get-Content -LiteralPath $CreatedRecord)
 }
 
 foreach ($RelativePath in $ManagedFiles) {
     $BackupFile = Join-Path $Backup $RelativePath
-    $DestinationFile = Join-Path $Target $RelativePath
+    $Destination = Join-Path $Target $RelativePath
     if (Test-Path -LiteralPath $BackupFile -PathType Leaf) {
-        New-Item -ItemType Directory -Path (Split-Path -Parent $DestinationFile) -Force | Out-Null
-        Copy-Item -LiteralPath $BackupFile -Destination $DestinationFile -Force
+        New-Item -ItemType Directory -Path (Split-Path -Parent $Destination) -Force | Out-Null
+        Copy-Item -LiteralPath $BackupFile -Destination $Destination -Force
     }
     elseif ($CreatedFiles -contains $RelativePath) {
-        Remove-Item -LiteralPath $DestinationFile -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $Destination -Force -ErrorAction SilentlyContinue
     }
 }
 
-Write-Host "Restore complete: $Target"
+Write-Host "Restore completed: $Target"

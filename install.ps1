@@ -1,106 +1,111 @@
 [CmdletBinding()]
 param(
-    [string]$Target,
-    [string]$Project,
-    [switch]$Force
+    [string]$Target
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+$Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 
-$ManagedFiles = @(
-    "options/laf.xml",
-    "options/ui.lnf.xml",
-    "options/editor.xml",
-    "options/colors.scheme.xml",
-    "colors/Ordered Dark.icls"
-)
-
-function Stop-WithError([string]$Message) {
+function Fail([string]$Message) {
     Write-Error $Message
     exit 1
 }
 
-if (-not $Force) {
-    $RunningIdea = Get-Process -ErrorAction SilentlyContinue |
-        Where-Object { $_.ProcessName -in @("idea64", "idea") }
-    if ($RunningIdea) {
-        Stop-WithError "IntelliJ IDEA is running. Close it completely and retry."
-    }
+function Write-Utf8([string]$Path, [string]$Content) {
+    New-Item -ItemType Directory -Path (Split-Path -Parent $Path) -Force | Out-Null
+    [System.IO.File]::WriteAllText($Path, $Content + [Environment]::NewLine, $Utf8NoBom)
+}
+
+$RunningIdea = Get-Process -ErrorAction SilentlyContinue |
+    Where-Object { $_.ProcessName -in @("idea64", "idea") }
+if ($RunningIdea) {
+    Fail "IntelliJ IDEA is running. Close it completely, then run this script again."
 }
 
 if ([string]::IsNullOrWhiteSpace($Target)) {
-    $CurrentDirectory = (Get-Location).Path
-    $CurrentName = Split-Path -Leaf $CurrentDirectory
-    if ($CurrentName -like "IntelliJIdea*" -or $CurrentName -like "IdeaIC*") {
-        $Target = $CurrentDirectory
+    if ([string]::IsNullOrWhiteSpace($env:APPDATA)) {
+        Fail "APPDATA is not available. Use -Target to specify the IDEA config directory."
     }
-    else {
-        $JetBrainsRoot = Join-Path $env:APPDATA "JetBrains"
-        if (-not (Test-Path -LiteralPath $JetBrainsRoot -PathType Container)) {
-            Stop-WithError "IDEA config root was not found. Use -Target PATH."
-        }
-        $Candidate = Get-ChildItem -LiteralPath $JetBrainsRoot -Directory |
-            Where-Object { $_.Name -like "IntelliJIdea*" -or $_.Name -like "IdeaIC*" } |
-            Sort-Object Name -Descending |
-            Select-Object -First 1
-        if ($null -eq $Candidate) {
-            Stop-WithError "IDEA config directory was not found. Use -Target PATH."
-        }
-        $Target = $Candidate.FullName
-    }
+    $Target = Join-Path $env:APPDATA "JetBrains/IntelliJIdea2025.3"
 }
 
 $Target = [System.IO.Path]::GetFullPath($Target)
 if (-not (Test-Path -LiteralPath $Target -PathType Container)) {
-    Stop-WithError "Target directory does not exist: $Target"
+    Fail "IDEA 2025.3 config directory was not found: $Target. Start IDEA 2025.3 once, close it, and retry."
 }
 
-$SourceRoot = $PSScriptRoot
-if (-not (Test-Path -LiteralPath (Join-Path $SourceRoot "settings/options/laf.xml") -PathType Leaf)) {
-    Stop-WithError "Run install.ps1 from a complete clone of this repository."
+$Files = [ordered]@{
+    "options/laf.xml" = @'
+<application>
+  <component name="LafManager" autodetect="false">
+    <laf themeId="Islands Dark" />
+  </component>
+</application>
+'@
+    "options/colors.scheme.xml" = @'
+<application>
+  <component name="EditorColorsManagerImpl">
+    <global_color_scheme name="Islands Dark" />
+  </component>
+</application>
+'@
 }
+
+$LegacyFiles = @(
+    "colors/Ordered Dark.icls",
+    "colors/OrderedDark.icls"
+)
 
 $Timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
-$BackupDirectory = Join-Path $Target "ordered-dark-backups/$Timestamp"
-New-Item -ItemType Directory -Path $BackupDirectory -Force | Out-Null
-Set-Content -LiteralPath (Join-Path $BackupDirectory ".target-dir") -Value $Target
+$Backup = Join-Path $Target "islands-dark-backups/$Timestamp"
+New-Item -ItemType Directory -Path $Backup -Force | Out-Null
+Write-Utf8 (Join-Path $Backup ".target-dir") $Target
 
-foreach ($RelativePath in $ManagedFiles) {
-    $SourceFile = Join-Path $SourceRoot "settings/$RelativePath"
-    $TargetFile = Join-Path $Target $RelativePath
-    if (-not (Test-Path -LiteralPath $SourceFile -PathType Leaf)) {
-        Stop-WithError "Missing settings file: $SourceFile"
-    }
-
-    if (Test-Path -LiteralPath $TargetFile -PathType Leaf) {
-        $BackupFile = Join-Path $BackupDirectory $RelativePath
+$CreatedFiles = @()
+foreach ($RelativePath in @($Files.Keys) + $LegacyFiles) {
+    $CurrentFile = Join-Path $Target $RelativePath
+    if (Test-Path -LiteralPath $CurrentFile -PathType Leaf) {
+        $BackupFile = Join-Path $Backup $RelativePath
         New-Item -ItemType Directory -Path (Split-Path -Parent $BackupFile) -Force | Out-Null
-        Copy-Item -LiteralPath $TargetFile -Destination $BackupFile -Force
+        Copy-Item -LiteralPath $CurrentFile -Destination $BackupFile -Force
     }
-    else {
-        Add-Content -LiteralPath (Join-Path $BackupDirectory ".created-files") -Value $RelativePath
+    elseif ($Files.Contains($RelativePath)) {
+        $CreatedFiles += $RelativePath
     }
-
-    New-Item -ItemType Directory -Path (Split-Path -Parent $TargetFile) -Force | Out-Null
-    Copy-Item -LiteralPath $SourceFile -Destination $TargetFile -Force
 }
 
-if (-not [string]::IsNullOrWhiteSpace($Project)) {
-    $Project = [System.IO.Path]::GetFullPath($Project)
-    if (-not (Test-Path -LiteralPath $Project -PathType Container)) {
-        Stop-WithError "Project directory does not exist: $Project"
-    }
-    $EditorConfig = Join-Path $Project ".editorconfig"
-    if (Test-Path -LiteralPath $EditorConfig -PathType Leaf) {
-        Copy-Item -LiteralPath $EditorConfig -Destination "$EditorConfig.before-ordered-dark-$Timestamp" -Force
-    }
-    Copy-Item -LiteralPath (Join-Path $SourceRoot "project/.editorconfig") -Destination $EditorConfig -Force
-    Write-Host "Project settings installed: $EditorConfig"
+foreach ($Entry in $Files.GetEnumerator()) {
+    Write-Utf8 (Join-Path $Target $Entry.Key) $Entry.Value
+}
+
+foreach ($RelativePath in $LegacyFiles) {
+    Remove-Item -LiteralPath (Join-Path $Target $RelativePath) -Force -ErrorAction SilentlyContinue
+}
+
+if ($CreatedFiles.Count -gt 0) {
+    Write-Utf8 (Join-Path $Backup ".created-files") ($CreatedFiles -join [Environment]::NewLine)
+}
+
+try {
+    [xml]$Laf = Get-Content -LiteralPath (Join-Path $Target "options/laf.xml") -Raw
+    [xml]$Colors = Get-Content -LiteralPath (Join-Path $Target "options/colors.scheme.xml") -Raw
+}
+catch {
+    Fail "The generated XML could not be parsed. Restore from: $Backup"
+}
+
+if ($Laf.application.component.laf.themeId -ne "Islands Dark") {
+    Fail "UI theme verification failed. Restore from: $Backup"
+}
+if ($Colors.application.component.global_color_scheme.name -ne "Islands Dark") {
+    Fail "Editor color scheme verification failed. Restore from: $Backup"
 }
 
 Write-Host ""
-Write-Host "Installation complete."
-Write-Host "IDEA config: $Target"
-Write-Host "Backup: $BackupDirectory"
-Write-Host "Start IntelliJ IDEA now. The UI theme is forced to Darcula."
+Write-Host "IntelliJ IDEA 2025.3 theme configuration completed."
+Write-Host "Config: $Target"
+Write-Host "Backup: $Backup"
+Write-Host "UI theme: Islands Dark"
+Write-Host "Editor color scheme: Islands Dark"
+Write-Host "Start IntelliJ IDEA now."

@@ -24,6 +24,9 @@ container0 / containerService Pod
 | VPCEP 终端节点服务 | container1 | `relay-controller` |
 | VPCEP 终端节点 | container0 | `vpcep-relay-controller`（如果页面支持填写名称） |
 | HTTPS 域名 | container0 调用 | 使用服务端证书允许的域名 |
+| RDS 数据库 | container1 | `relay_controller` |
+| RDS 数据库账号 | container1 | `relay_controller` |
+| CCE 数据库凭据 Secret | container1 | `relay-controller-db-credentials` |
 
 ## 三、开始前准备
 
@@ -33,7 +36,73 @@ container0 / containerService Pod
 - 确认 `infraService` 所属集群的 VPC 和默认节点子网。
 - 确认 `containerService` 所属集群的 VPC 和默认节点子网。
 
-## 四、配置步骤
+## 四、container1 数据库准备
+
+本节是在已有 RDS for MySQL 实例中创建业务数据库和业务账号，不是新购 RDS 实例。
+
+### 步骤 1：创建数据库
+
+在 `container1` 账号操作：
+
+```text
+华为云控制台 → 搜索 RDS → 实例管理
+→ 进入 scheduleservice 所属 RDS 实例
+→ 数据库与账号管理 → 数据库管理 → 创建数据库
+```
+
+填写：
+
+| 配置项 | 值 |
+|---|---|
+| 数据库名称 | `relay_controller` |
+| 字符集 | `utf8mb4` |
+| 备注 | `relay-controller service database`（可选） |
+
+单击“确定”完成创建。
+
+### 步骤 2：创建数据库账号并授权
+
+继续进入：
+
+```text
+数据库与账号管理 → 账号管理 → 创建账号
+```
+
+填写：
+
+| 配置项 | 值 |
+|---|---|
+| 账号名称 | `relay_controller` |
+| 访问主机 IP | `%` |
+| 授权数据库 | 只选择 `relay_controller` |
+| 数据库权限 | 按应用需要选择读写权限，不授权其他数据库 |
+| 密码 | `<由密码管理系统生成的强密码>` |
+| 确认密码 | 与上面一致 |
+
+注意：RDS 创建账号页面需要填写数据库的实际密码。页面虽然以掩码显示，但不要把“应用加密后的密文”误当成数据库密码填写。实际密码应存入密码管理系统或 CCE Secret，不要写进操作手册、代码仓库或普通配置文件。
+
+推荐在 `infraService` 中使用名为 `relay-controller-db-credentials` 的 CCE Secret 保存数据库账号和密码。
+
+### 步骤 3：限制数据库网络访问
+
+`访问主机 IP = %` 表示该数据库账号允许来自任意主机地址的登录请求，因此必须使用 RDS 安全组控制网络范围：
+
+- RDS 不绑定公网 IP。
+- RDS 安全组只放行 MySQL 实际端口，默认是 `3306`。
+- 来源填写 `infraService` 集群实际使用的最小节点/容器子网 CIDR。
+- 不要将数据库端口向 `0.0.0.0/0` 放开。
+
+最后记录以下连接信息，但不要记录密码：
+
+```text
+DB_HOST=<RDS内网域名，优先于固定IP>
+DB_PORT=3306
+DB_NAME=relay_controller
+DB_USERNAME=relay_controller
+DB_PASSWORD=<从Secret读取>
+```
+
+## 五、ELB 与 VPCEP 配置步骤
 
 ### 步骤 1：container1 创建私网 ELB
 
@@ -64,7 +133,7 @@ container0 / containerService Pod
 - ELB 名称：`elb-relay-controller`
 - ELB 的 IPv4 私有地址
 
-此时不需要手工添加 Pod IP，也不需要手工创建监听器。下一步由 CCE Service 绑定 ELB并创建监听器和后端。
+此时不需要手工添加 Pod IP，也不需要手工创建监听器。下一步由 CCE Service 绑定 ELB，并创建监听器和后端。
 
 ### 步骤 2：container1 为 infraService 创建负载均衡 Service
 
@@ -185,7 +254,7 @@ container0 终端节点IP:8443
 
 创建后等待状态变为“已接受”或“可用”，并记录终端节点的 IPv4 私有地址。
 
-## 五、调用方式
+## 六、调用方式
 
 ### 1. 先检查端口
 
@@ -228,8 +297,12 @@ curl -v \
 
 如果使用私有 CA，`container0` 还需要信任对应根证书。如果服务启用了双向 TLS，还需要提供客户端证书和私钥。
 
-## 六、验收清单
+## 七、验收清单
 
+- [ ] RDS 数据库 `relay_controller` 已创建，字符集为 `utf8mb4`
+- [ ] RDS 账号 `relay_controller` 仅获得目标数据库所需权限
+- [ ] 数据库密码已存入 Secret，没有写入手册或代码
+- [ ] RDS 安全组仅放行 `infraService` 所需网段和数据库端口
 - [ ] `elb-relay-controller` 与 `infraService` 集群位于同一 VPC
 - [ ] ELB 没有绑定公网 IP
 - [ ] CCE Service 已选择 `elb-relay-controller`
@@ -241,7 +314,7 @@ curl -v \
 - [ ] `container0` Pod 可以连接终端节点 IP 的 `8443`
 - [ ] 正式调用使用证书允许的域名
 
-## 七、常见问题
+## 八、常见问题
 
 | 现象 | 优先检查 |
 |---|---|
@@ -251,9 +324,13 @@ curl -v \
 | 502 Bad Gateway | ELB 后端健康状态、8443 的 HTTP/HTTPS 协议、应用内部上游 |
 | 证书域名不匹配 | 使用证书域名，并解析到 container0 的终端节点 IP |
 | tls alert bad certificate | 检查是否要求客户端证书（双向 TLS） |
+| Access denied for user | 检查账号、实际密码、主机 IP 和数据库授权 |
+| Communications link failure | 检查 RDS 内网地址、端口、VPC 和安全组规则 |
 
 ## 官方参考
 
 - [CCE 创建负载均衡类型 Service](https://support.huaweicloud.com/usermanual-cce/cce_10_0681.html)
 - [VPCEP 跨账号配置](https://support.huaweicloud.com/qs-vpcep/vpcep_02_0203.html)
 - [创建 VPCEP 终端节点服务](https://support.huaweicloud.com/usermanual-vpcep/zh-cn_topic_0131645182.html)
+- [RDS for MySQL 创建数据库](https://support.huaweicloud.com/usermanual-rds-mysql/rds_05_0019.html)
+- [RDS for MySQL 修改账号主机 IP](https://support.huaweicloud.com/usermanual-rds-mysql/rds_05_0050.html)

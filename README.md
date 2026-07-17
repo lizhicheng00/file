@@ -1,11 +1,11 @@
 # IntelliJ IDEA Ordered Dark 配置
 
-一套偏低噪音、强层级、可回滚的 IntelliJ IDEA 配置。当前版本基于 IntelliJ IDEA 2026.1，支持 Windows、Linux 和 macOS。
+一套偏低噪音、强层级、可回滚的 IntelliJ IDEA 配置。以长期内置的 `Darcula` 为兼容基底，不要求 IDEA 提供 `Islands Dark`，支持 Windows、Linux 和 macOS。
 
 ## 配置内容
 
-- `Ordered Dark`：基于 `Islands Dark` 的冷灰深色主题
-- IDEA 整体 UI 强制使用 `Islands Dark`，不跟随 Windows 浅色模式
+- `Ordered Dark`：基于 `Darcula` 的更深冷灰编辑器主题
+- IDEA 整体 UI 强制使用 `Darcula`，不跟随 Windows 浅色模式
 - JetBrains Mono 14px，编辑器行距 1.2
 - 显示行号、缩进导线、右边界、尾随空格和 Sticky Lines
 - 关闭悬浮快速文档、动画滚动和预览标签自动替换

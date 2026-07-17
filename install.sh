@@ -152,4 +152,5 @@ fi
 printf '\n安装完成。\n'
 printf 'IDEA 配置目录：%s\n' "$target_dir"
 printf '备份目录：%s\n' "$backup_dir"
+printf '界面主题：Darcula；编辑器主题：Ordered Dark（Darcula 基底）。\n'
 printf '现在可以启动 IntelliJ IDEA。\n'

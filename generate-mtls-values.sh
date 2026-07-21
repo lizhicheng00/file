@@ -20,7 +20,8 @@ Each input directory must contain:
   password.txt  Password of server.key (an empty file means no password)
 
 All generated PKCS#12 files use the password: 123
-Requires OpenSSL and Java 11 or newer. keytool is not required.
+Uses /root/jdk-21.0.9/bin/java by default; JAVA_BIN can override this path.
+Requires OpenSSL. keytool and Java environment variables are not required.
 EOF
 }
 
@@ -32,13 +33,17 @@ fi
 readonly CLIENT_DIR="${1:-./client}"
 readonly SERVER_DIR="${2:-./server}"
 readonly OUTPUT_DIR="${3:-./mtls}"
+readonly JAVA_BIN="${JAVA_BIN:-/root/jdk-21.0.9/bin/java}"
 
-for command_name in openssl java; do
-    if ! command -v "${command_name}" >/dev/null 2>&1; then
-        echo "Error: required command not found: ${command_name}" >&2
-        exit 1
-    fi
-done
+if ! command -v openssl >/dev/null 2>&1; then
+    echo 'Error: required command not found: openssl' >&2
+    exit 1
+fi
+
+if [[ ! -x "${JAVA_BIN}" ]]; then
+    echo "Error: Java executable not found or not executable: ${JAVA_BIN}" >&2
+    exit 1
+fi
 
 for input_dir in "${CLIENT_DIR}" "${SERVER_DIR}"; do
     for file_name in server.crt server.key password.txt; do
@@ -153,7 +158,7 @@ create_trust_store() {
     local certificate_file="$2"
     local output_file="$3"
 
-    java "${TRUST_STORE_HELPER}" \
+    "${JAVA_BIN}" "${TRUST_STORE_HELPER}" \
         "${certificate_file}" \
         "${output_file}" \
         "${alias_name}" \

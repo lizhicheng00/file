@@ -20,6 +20,7 @@ Each input directory must contain:
   password.txt  Password of server.key (an empty file means no password)
 
 All generated PKCS#12 files use the password: 123
+Requires OpenSSL and Java 11 or newer. keytool is not required.
 EOF
 }
 
@@ -32,7 +33,7 @@ readonly CLIENT_DIR="${1:-./client}"
 readonly SERVER_DIR="${2:-./server}"
 readonly OUTPUT_DIR="${3:-./mtls}"
 
-for command_name in openssl keytool; do
+for command_name in openssl java; do
     if ! command -v "${command_name}" >/dev/null 2>&1; then
         echo "Error: required command not found: ${command_name}" >&2
         exit 1
@@ -57,6 +58,50 @@ cleanup() {
     rm -rf -- "${WORK_DIR}"
 }
 trap cleanup EXIT
+
+readonly TRUST_STORE_HELPER="${WORK_DIR}/CreateTrustStore.java"
+
+cat > "${TRUST_STORE_HELPER}" <<'JAVA'
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.security.KeyStore;
+import java.security.cert.Certificate;
+import java.security.cert.CertificateFactory;
+import java.util.Collection;
+
+public class CreateTrustStore {
+    public static void main(String[] args) throws Exception {
+        Path certificateFile = Path.of(args[0]);
+        Path outputFile = Path.of(args[1]);
+        String aliasPrefix = args[2];
+        char[] password = args[3].toCharArray();
+
+        Collection<? extends Certificate> certificates;
+        CertificateFactory certificateFactory = CertificateFactory.getInstance("X.509");
+        try (InputStream input = Files.newInputStream(certificateFile)) {
+            certificates = certificateFactory.generateCertificates(input);
+        }
+        if (certificates.isEmpty()) {
+            throw new IllegalArgumentException("No X.509 certificate found: " + certificateFile);
+        }
+
+        KeyStore trustStore = KeyStore.getInstance("PKCS12");
+        trustStore.load(null, password);
+        int index = 0;
+        for (Certificate certificate : certificates) {
+            String alias = index == 0 ? aliasPrefix : aliasPrefix + "-" + (index + 1);
+            trustStore.setCertificateEntry(alias, certificate);
+            index++;
+        }
+
+        try (OutputStream output = Files.newOutputStream(outputFile)) {
+            trustStore.store(output, password);
+        }
+    }
+}
+JAVA
 
 key_password_args() {
     local password_file="$1"
@@ -108,20 +153,11 @@ create_trust_store() {
     local certificate_file="$2"
     local output_file="$3"
 
-    # keytool refuses to create a new keystore with a three-character password.
-    # OpenSSL creates the container first, after which keytool can safely add a
-    # Java trustedCertEntry while retaining the requested password "123".
-    openssl pkcs12 -export -nokeys \
-        -in "${certificate_file}" \
-        -name placeholder \
-        -out "${output_file}" \
-        -passout "pass:${P12_PASSWORD}"
-    keytool -importcert -noprompt \
-        -alias "${alias_name}" \
-        -file "${certificate_file}" \
-        -keystore "${output_file}" \
-        -storetype PKCS12 \
-        -storepass "${P12_PASSWORD}" >/dev/null
+    java "${TRUST_STORE_HELPER}" \
+        "${certificate_file}" \
+        "${output_file}" \
+        "${alias_name}" \
+        "${P12_PASSWORD}"
 }
 
 validate_pair client "${CLIENT_DIR}"

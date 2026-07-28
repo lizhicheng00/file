@@ -3,15 +3,6 @@
 .SYNOPSIS
     Windows 10/11 的稳质、低噪声个性化脚本。
 
-  $scriptPath = Join-Path $PWD "steady-windows.ps1"
-
-  curl.exe -L `
-    "https://raw.githubusercontent.com/lizhicheng00/file/2e47611f26298a4400da967886142d892b136088/scripts/steady-windows.ps1" `
-    -o $scriptPath
-
-  Unblock-File -LiteralPath $scriptPath
-  Get-FileHash -Algorithm SHA256 $scriptPath
-
 .DESCRIPTION
     以“核心稳定、结构清晰、行动有余量”为原则调整当前用户的 Windows：
     - 深色、克制的外观；

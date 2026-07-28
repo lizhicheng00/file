@@ -262,20 +262,57 @@ function Set-RegistryValue {
     New-ItemProperty -LiteralPath $Path -Name $Name -PropertyType $Type -Value $Value -Force | Out-Null
 }
 
+function Test-IsAccessDeniedError {
+    param([System.Management.Automation.ErrorRecord]$ErrorRecord)
+
+    $exception = $ErrorRecord.Exception
+    while ($null -ne $exception) {
+        if (
+            $exception -is [System.UnauthorizedAccessException] -or
+            $exception -is [System.Security.SecurityException]
+        ) {
+            return $true
+        }
+        $exception = $exception.InnerException
+    }
+
+    $details = "{0} {1}" -f $ErrorRecord.FullyQualifiedErrorId, $ErrorRecord.Exception.Message
+    return $details -match "UnauthorizedAccess|access.*denied|not allowed|拒绝访问|未授权|不允许访问"
+}
+
 function Restore-RegistrySnapshot {
     param([object[]]$Snapshots)
 
+    $skippedCount = 0
     foreach ($snapshot in $Snapshots) {
-        if ([bool]$snapshot.Exists) {
-            $value = Convert-SnapshotValue -Snapshot $snapshot
-            Set-RegistryValue -Path $snapshot.Path -Name $snapshot.Name -Type $snapshot.Kind -Value $value
-        }
-        elseif (Test-Path -LiteralPath $snapshot.Path) {
-            $key = Get-Item -LiteralPath $snapshot.Path
-            if ($key.GetValueNames() -contains $snapshot.Name) {
-                Remove-ItemProperty -LiteralPath $snapshot.Path -Name $snapshot.Name -Force
+        try {
+            if ([bool]$snapshot.Exists) {
+                $value = Convert-SnapshotValue -Snapshot $snapshot
+                Set-RegistryValue -Path $snapshot.Path -Name $snapshot.Name -Type $snapshot.Kind -Value $value
+            }
+            elseif (Test-Path -LiteralPath $snapshot.Path) {
+                $key = Get-Item -LiteralPath $snapshot.Path
+                if ($key.GetValueNames() -contains $snapshot.Name) {
+                    Remove-ItemProperty -LiteralPath $snapshot.Path -Name $snapshot.Name -Force
+                }
             }
         }
+        catch {
+            if (Test-IsAccessDeniedError -ErrorRecord $_) {
+                $skippedCount++
+                Write-SteadyLog "WARN" (
+                    "权限受限，无法恢复注册表值，已跳过：{0}\{1}" -f
+                    $snapshot.Path,
+                    $snapshot.Name
+                )
+                continue
+            }
+            throw
+        }
+    }
+
+    if ($skippedCount -gt 0) {
+        Write-SteadyLog "WARN" "恢复完成，但有 $skippedCount 个受系统策略保护的值未能恢复。"
     }
 }
 
@@ -512,11 +549,34 @@ function Invoke-Apply {
     }
     Save-BackupDocument -Document $backupDocument -Path $backupFile
 
+    $appliedSnapshots = @()
+    $skippedSettings = @()
+
     try {
-        foreach ($setting in $Settings) {
-            Set-RegistryValue -Path $setting.Path -Name $setting.Name -Type $setting.Type -Value $setting.Value
-            Write-SteadyLog "CHANGE" $setting.Description
+        for ($index = 0; $index -lt $Settings.Count; $index++) {
+            $setting = $Settings[$index]
+            try {
+                Set-RegistryValue -Path $setting.Path -Name $setting.Name -Type $setting.Type -Value $setting.Value
+                $appliedSnapshots += $snapshots[$index]
+                Write-SteadyLog "CHANGE" $setting.Description
+            }
+            catch {
+                if (Test-IsAccessDeniedError -ErrorRecord $_) {
+                    $skippedSettings += $setting
+                    Write-SteadyLog "WARN" (
+                        "权限受限，已跳过：{0} [{1}]" -f
+                        $setting.Description,
+                        $setting.Name
+                    )
+                    continue
+                }
+                throw
+            }
         }
+
+        # 恢复时只处理本次确实成功修改过的值。
+        $backupDocument.Registry = @($appliedSnapshots)
+        Save-BackupDocument -Document $backupDocument -Path $backupFile
 
         Set-DesktopWallpaper -Path $Wallpaper
 
@@ -528,11 +588,14 @@ function Invoke-Apply {
 
         Update-WindowsShell
         Write-SteadyLog "OK" "配置完成。备份编号：$backupId"
+        if ($skippedSettings.Count -gt 0) {
+            Write-SteadyLog "WARN" "有 $($skippedSettings.Count) 个受系统策略保护的可选设置未修改。"
+        }
         Write-SteadyLog "INFO" "恢复命令：.\steady-windows.ps1 -Action Restore -Backup `"$backupId`""
     }
     catch {
         Write-SteadyLog "ERROR" "应用过程中发生错误，正在回滚：$($_.Exception.Message)"
-        Restore-RegistrySnapshot -Snapshots $snapshots
+        Restore-RegistrySnapshot -Snapshots $appliedSnapshots
         if ($backupDocument.PowerPlan) {
             Restore-PowerPlan -PowerPlan $backupDocument.PowerPlan
         }

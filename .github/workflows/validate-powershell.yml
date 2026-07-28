@@ -49,6 +49,14 @@ jobs:
               throw "Windows PowerShell 5.1 syntax validation failed."
           }
 
+      - name: Run preview with Windows PowerShell 5.1
+        shell: powershell
+        run: |
+          & .\scripts\steady-windows.ps1 -Action Preview
+          if (-not $?) {
+              throw "Windows PowerShell 5.1 preview failed."
+          }
+
       - name: Parse with PowerShell 7
         shell: pwsh
         run: |
@@ -74,4 +82,12 @@ jobs:
           }
           if ($failed) {
               throw "PowerShell 7 syntax validation failed."
+          }
+
+      - name: Run preview with PowerShell 7
+        shell: pwsh
+        run: |
+          & ./scripts/steady-windows.ps1 -Action Preview
+          if (-not $?) {
+              throw "PowerShell 7 preview failed."
           }

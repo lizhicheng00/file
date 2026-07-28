@@ -110,98 +110,78 @@ function Initialize-DataFolders {
     }
 }
 
-function New-RegSetting {
-    [CmdletBinding(PositionalBinding = $false)]
-    param(
-        [string]$Category,
-        [string]$Path,
-        [string]$Name,
-        [ValidateSet("String", "ExpandString", "Binary", "DWord", "MultiString", "QWord")]
-        [string]$Type,
-        [AllowNull()]
-        [object]$Value,
-        [string]$Description,
-        [int]$MinBuild = 10240,
-        [int]$MaxBuild = [int]::MaxValue
-    )
-
-    [pscustomobject]@{
-        Category    = $Category
-        Path        = $Path
-        Name        = $Name
-        Type        = $Type
-        Value       = $Value
-        Description = $Description
-        MinBuild    = $MinBuild
-        MaxBuild    = $MaxBuild
-    }
-}
-
 function Get-SteadySettings {
     param(
         [int]$Build,
         [string]$WallpaperPath
     )
 
+    # 使用静态对象而非位置参数函数，确保 Windows PowerShell 5.1 与 PowerShell 7
+    # 对每个字段的解释完全一致。
     $settings = @(
         # 外观：深色、稳定、低视觉噪声。
-        (New-RegSetting -Category "外观" -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize" -Name "AppsUseLightTheme" -Type "DWord" -Value 0 -Description "应用使用深色模式"),
-        (New-RegSetting -Category "外观" -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize" -Name "SystemUsesLightTheme" -Type "DWord" -Value 0 -Description "系统界面使用深色模式"),
-        (New-RegSetting -Category "外观" -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize" -Name "EnableTransparency" -Type "DWord" -Value 0 -Description "关闭透明效果，减少干扰与 GPU 开销"),
-        (New-RegSetting -Category "外观" -Path "HKCU:\Software\Microsoft\Windows\DWM" -Name "ColorPrevalence" -Type "DWord" -Value 0 -Description "标题栏保持克制，不铺满强调色"),
-        (New-RegSetting -Category "外观" -Path "HKCU:\Control Panel\Desktop" -Name "DragFullWindows" -Type "String" -Value "1" -Description "拖动窗口时显示完整内容"),
-        (New-RegSetting -Category "外观" -Path "HKCU:\Control Panel\Desktop" -Name "MenuShowDelay" -Type "String" -Value "180" -Description "缩短菜单响应延迟但保留从容感"),
+        [pscustomobject]@{ Category = "外观"; Path = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize"; Name = "AppsUseLightTheme"; Type = "DWord"; Value = 0; Description = "应用使用深色模式" }
+        [pscustomobject]@{ Category = "外观"; Path = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize"; Name = "SystemUsesLightTheme"; Type = "DWord"; Value = 0; Description = "系统界面使用深色模式" }
+        [pscustomobject]@{ Category = "外观"; Path = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize"; Name = "EnableTransparency"; Type = "DWord"; Value = 0; Description = "关闭透明效果，减少干扰与 GPU 开销" }
+        [pscustomobject]@{ Category = "外观"; Path = "HKCU:\Software\Microsoft\Windows\DWM"; Name = "ColorPrevalence"; Type = "DWord"; Value = 0; Description = "标题栏保持克制，不铺满强调色" }
+        [pscustomobject]@{ Category = "外观"; Path = "HKCU:\Control Panel\Desktop"; Name = "DragFullWindows"; Type = "String"; Value = "1"; Description = "拖动窗口时显示完整内容" }
+        [pscustomobject]@{ Category = "外观"; Path = "HKCU:\Control Panel\Desktop"; Name = "MenuShowDelay"; Type = "String"; Value = "180"; Description = "缩短菜单响应延迟但保留从容感" }
 
         # 资源管理器：信息透明、核心路径清楚，同时保护系统文件。
-        (New-RegSetting -Category "资源管理器" -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "HideFileExt" -Type "DWord" -Value 0 -Description "显示文件扩展名"),
-        (New-RegSetting -Category "资源管理器" -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "Hidden" -Type "DWord" -Value 1 -Description "显示隐藏文件"),
-        (New-RegSetting -Category "资源管理器" -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "ShowSuperHidden" -Type "DWord" -Value 0 -Description "继续隐藏受保护的系统文件"),
-        (New-RegSetting -Category "资源管理器" -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "LaunchTo" -Type "DWord" -Value 1 -Description "资源管理器默认打开“此电脑”"),
-        (New-RegSetting -Category "资源管理器" -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "ShowStatusBar" -Type "DWord" -Value 1 -Description "显示状态栏"),
-        (New-RegSetting -Category "资源管理器" -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\CabinetState" -Name "FullPath" -Type "DWord" -Value 1 -Description "标题栏显示完整路径"),
-        (New-RegSetting -Category "资源管理器" -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "SeparateProcess" -Type "DWord" -Value 1 -Description "文件夹窗口使用独立进程，提高故障隔离"),
-        (New-RegSetting -Category "资源管理器" -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "UseCompactMode" -Type "DWord" -Value 1 -Description "使用紧凑布局" -MinBuild 22000),
-        (New-RegSetting -Category "资源管理器" -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer" -Name "ShowRecent" -Type "DWord" -Value 0 -Description "主页不堆积最近文件"),
-        (New-RegSetting -Category "资源管理器" -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer" -Name "ShowFrequent" -Type "DWord" -Value 0 -Description "主页不堆积常用文件夹"),
+        [pscustomobject]@{ Category = "资源管理器"; Path = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"; Name = "HideFileExt"; Type = "DWord"; Value = 0; Description = "显示文件扩展名" }
+        [pscustomobject]@{ Category = "资源管理器"; Path = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"; Name = "Hidden"; Type = "DWord"; Value = 1; Description = "显示隐藏文件" }
+        [pscustomobject]@{ Category = "资源管理器"; Path = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"; Name = "ShowSuperHidden"; Type = "DWord"; Value = 0; Description = "继续隐藏受保护的系统文件" }
+        [pscustomobject]@{ Category = "资源管理器"; Path = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"; Name = "LaunchTo"; Type = "DWord"; Value = 1; Description = "资源管理器默认打开“此电脑”" }
+        [pscustomobject]@{ Category = "资源管理器"; Path = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"; Name = "ShowStatusBar"; Type = "DWord"; Value = 1; Description = "显示状态栏" }
+        [pscustomobject]@{ Category = "资源管理器"; Path = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\CabinetState"; Name = "FullPath"; Type = "DWord"; Value = 1; Description = "标题栏显示完整路径" }
+        [pscustomobject]@{ Category = "资源管理器"; Path = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"; Name = "SeparateProcess"; Type = "DWord"; Value = 1; Description = "文件夹窗口使用独立进程，提高故障隔离" }
+        [pscustomobject]@{ Category = "资源管理器"; Path = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer"; Name = "ShowRecent"; Type = "DWord"; Value = 0; Description = "主页不堆积最近文件" }
+        [pscustomobject]@{ Category = "资源管理器"; Path = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer"; Name = "ShowFrequent"; Type = "DWord"; Value = 0; Description = "主页不堆积常用文件夹" }
 
         # 多任务：保留好用的系统能力，把界面入口收静。
-        (New-RegSetting -Category "多任务" -Path "HKCU:\Control Panel\Desktop" -Name "WindowArrangementActive" -Type "String" -Value "1" -Description "启用窗口贴靠"),
-        (New-RegSetting -Category "多任务" -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "SnapAssist" -Type "DWord" -Value 1 -Description "启用贴靠建议"),
-        (New-RegSetting -Category "多任务" -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "SnapAssistFlyout" -Type "DWord" -Value 1 -Description "启用贴靠布局"),
-        (New-RegSetting -Category "多任务" -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "SnapBar" -Type "DWord" -Value 1 -Description "启用屏幕顶部贴靠栏" -MinBuild 22000),
-        (New-RegSetting -Category "多任务" -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "VirtualDesktopAltTabFilter" -Type "DWord" -Value 1 -Description "Alt+Tab 仅显示当前虚拟桌面窗口"),
-        (New-RegSetting -Category "多任务" -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "VirtualDesktopTaskbarFilter" -Type "DWord" -Value 1 -Description "任务栏仅显示当前虚拟桌面窗口"),
+        [pscustomobject]@{ Category = "多任务"; Path = "HKCU:\Control Panel\Desktop"; Name = "WindowArrangementActive"; Type = "String"; Value = "1"; Description = "启用窗口贴靠" }
+        [pscustomobject]@{ Category = "多任务"; Path = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"; Name = "SnapAssist"; Type = "DWord"; Value = 1; Description = "启用贴靠建议" }
+        [pscustomobject]@{ Category = "多任务"; Path = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"; Name = "SnapAssistFlyout"; Type = "DWord"; Value = 1; Description = "启用贴靠布局" }
+        [pscustomobject]@{ Category = "多任务"; Path = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"; Name = "VirtualDesktopAltTabFilter"; Type = "DWord"; Value = 1; Description = "Alt+Tab 仅显示当前虚拟桌面窗口" }
+        [pscustomobject]@{ Category = "多任务"; Path = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"; Name = "VirtualDesktopTaskbarFilter"; Type = "DWord"; Value = 1; Description = "任务栏仅显示当前虚拟桌面窗口" }
 
         # 任务栏：只保留稳定入口，不用策略锁死用户选择。
-        (New-RegSetting -Category "任务栏" -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Search" -Name "SearchboxTaskbarMode" -Type "DWord" -Value 1 -Description "搜索收为图标"),
-        (New-RegSetting -Category "任务栏" -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "ShowTaskViewButton" -Type "DWord" -Value 0 -Description "隐藏任务视图按钮，快捷键仍可用"),
-        (New-RegSetting -Category "任务栏" -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "TaskbarAl" -Type "DWord" -Value 0 -Description "Windows 11 任务栏左对齐" -MinBuild 22000),
-        (New-RegSetting -Category "任务栏" -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "TaskbarDa" -Type "DWord" -Value 0 -Description "隐藏 Windows 11 小组件按钮" -MinBuild 22000),
-        (New-RegSetting -Category "任务栏" -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "TaskbarMn" -Type "DWord" -Value 0 -Description "隐藏 Windows 11 聊天按钮" -MinBuild 22000),
+        [pscustomobject]@{ Category = "任务栏"; Path = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Search"; Name = "SearchboxTaskbarMode"; Type = "DWord"; Value = 1; Description = "搜索收为图标" }
+        [pscustomobject]@{ Category = "任务栏"; Path = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"; Name = "ShowTaskViewButton"; Type = "DWord"; Value = 0; Description = "隐藏任务视图按钮，快捷键仍可用" }
 
         # 开始菜单与通知：关闭系统自我推广，保留真正的通知能力。
-        (New-RegSetting -Category "低噪声" -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "Start_IrisRecommendations" -Type "DWord" -Value 0 -Description "关闭开始菜单在线推荐"),
-        (New-RegSetting -Category "低噪声" -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "Start_AccountNotifications" -Type "DWord" -Value 0 -Description "关闭开始菜单账户推广通知"),
-        (New-RegSetting -Category "低噪声" -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" -Name "SoftLandingEnabled" -Type "DWord" -Value 0 -Description "关闭 Windows 使用技巧弹窗"),
-        (New-RegSetting -Category "低噪声" -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" -Name "SystemPaneSuggestionsEnabled" -Type "DWord" -Value 0 -Description "关闭系统面板建议"),
-        (New-RegSetting -Category "低噪声" -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" -Name "SubscribedContent-310093Enabled" -Type "DWord" -Value 0 -Description "关闭设置应用中的推荐内容"),
-        (New-RegSetting -Category "低噪声" -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" -Name "SubscribedContent-338389Enabled" -Type "DWord" -Value 0 -Description "关闭 Windows 提示与建议"),
-        (New-RegSetting -Category "低噪声" -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\UserProfileEngagement" -Name "ScoobeSystemSettingEnabled" -Type "DWord" -Value 0 -Description "关闭登录后的设备完成设置提示"),
+        [pscustomobject]@{ Category = "低噪声"; Path = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"; Name = "Start_IrisRecommendations"; Type = "DWord"; Value = 0; Description = "关闭开始菜单在线推荐" }
+        [pscustomobject]@{ Category = "低噪声"; Path = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"; Name = "Start_AccountNotifications"; Type = "DWord"; Value = 0; Description = "关闭开始菜单账户推广通知" }
+        [pscustomobject]@{ Category = "低噪声"; Path = "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager"; Name = "SoftLandingEnabled"; Type = "DWord"; Value = 0; Description = "关闭 Windows 使用技巧弹窗" }
+        [pscustomobject]@{ Category = "低噪声"; Path = "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager"; Name = "SystemPaneSuggestionsEnabled"; Type = "DWord"; Value = 0; Description = "关闭系统面板建议" }
+        [pscustomobject]@{ Category = "低噪声"; Path = "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager"; Name = "SubscribedContent-310093Enabled"; Type = "DWord"; Value = 0; Description = "关闭设置应用中的推荐内容" }
+        [pscustomobject]@{ Category = "低噪声"; Path = "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager"; Name = "SubscribedContent-338389Enabled"; Type = "DWord"; Value = 0; Description = "关闭 Windows 提示与建议" }
+        [pscustomobject]@{ Category = "低噪声"; Path = "HKCU:\Software\Microsoft\Windows\CurrentVersion\UserProfileEngagement"; Name = "ScoobeSystemSettingEnabled"; Type = "DWord"; Value = 0; Description = "关闭登录后的设备完成设置提示" }
 
         # 隐私：减少个性化广告，但不破坏应用权限和云同步。
-        (New-RegSetting -Category "隐私" -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\AdvertisingInfo" -Name "Enabled" -Type "DWord" -Value 0 -Description "关闭当前用户广告 ID"),
-        (New-RegSetting -Category "隐私" -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Privacy" -Name "TailoredExperiencesWithDiagnosticDataEnabled" -Type "DWord" -Value 0 -Description "关闭基于诊断数据的定制体验")
+        [pscustomobject]@{ Category = "隐私"; Path = "HKCU:\Software\Microsoft\Windows\CurrentVersion\AdvertisingInfo"; Name = "Enabled"; Type = "DWord"; Value = 0; Description = "关闭当前用户广告 ID" }
+        [pscustomobject]@{ Category = "隐私"; Path = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Privacy"; Name = "TailoredExperiencesWithDiagnosticDataEnabled"; Type = "DWord"; Value = 0; Description = "关闭基于诊断数据的定制体验" }
     )
 
-    if ($WallpaperPath) {
+    if ($Build -ge 22000) {
         $settings += @(
-            (New-RegSetting -Category "壁纸" -Path "HKCU:\Control Panel\Desktop" -Name "Wallpaper" -Type "String" -Value $WallpaperPath -Description "设置桌面壁纸"),
-            (New-RegSetting -Category "壁纸" -Path "HKCU:\Control Panel\Desktop" -Name "WallpaperStyle" -Type "String" -Value "10" -Description "壁纸使用填充方式"),
-            (New-RegSetting -Category "壁纸" -Path "HKCU:\Control Panel\Desktop" -Name "TileWallpaper" -Type "String" -Value "0" -Description "关闭壁纸平铺")
+            [pscustomobject]@{ Category = "资源管理器"; Path = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"; Name = "UseCompactMode"; Type = "DWord"; Value = 1; Description = "使用紧凑布局" }
+            [pscustomobject]@{ Category = "多任务"; Path = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"; Name = "SnapBar"; Type = "DWord"; Value = 1; Description = "启用屏幕顶部贴靠栏" }
+            [pscustomobject]@{ Category = "任务栏"; Path = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"; Name = "TaskbarAl"; Type = "DWord"; Value = 0; Description = "Windows 11 任务栏左对齐" }
+            [pscustomobject]@{ Category = "任务栏"; Path = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"; Name = "TaskbarDa"; Type = "DWord"; Value = 0; Description = "隐藏 Windows 11 小组件按钮" }
+            [pscustomobject]@{ Category = "任务栏"; Path = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"; Name = "TaskbarMn"; Type = "DWord"; Value = 0; Description = "隐藏 Windows 11 聊天按钮" }
         )
     }
 
-    return @($settings | Where-Object { $Build -ge $_.MinBuild -and $Build -le $_.MaxBuild })
+    if ($WallpaperPath) {
+        $settings += @(
+            [pscustomobject]@{ Category = "壁纸"; Path = "HKCU:\Control Panel\Desktop"; Name = "Wallpaper"; Type = "String"; Value = $WallpaperPath; Description = "设置桌面壁纸" }
+            [pscustomobject]@{ Category = "壁纸"; Path = "HKCU:\Control Panel\Desktop"; Name = "WallpaperStyle"; Type = "String"; Value = "10"; Description = "壁纸使用填充方式" }
+            [pscustomobject]@{ Category = "壁纸"; Path = "HKCU:\Control Panel\Desktop"; Name = "TileWallpaper"; Type = "String"; Value = "0"; Description = "关闭壁纸平铺" }
+        )
+    }
+
+    return @($settings)
 }
 
 function Get-RegistryValueSnapshot {

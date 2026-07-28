@@ -1,0 +1,77 @@
+name: Validate PowerShell
+
+on:
+  push:
+    paths:
+      - "scripts/**/*.ps1"
+      - ".github/workflows/validate-powershell.yml"
+  pull_request:
+    paths:
+      - "scripts/**/*.ps1"
+      - ".github/workflows/validate-powershell.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  parse:
+    name: Parse scripts
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Parse with Windows PowerShell 5.1
+        shell: powershell
+        run: |
+          $failed = $false
+          Get-ChildItem -Path scripts -Filter *.ps1 -Recurse | ForEach-Object {
+              $tokens = $null
+              $errors = $null
+              [System.Management.Automation.Language.Parser]::ParseFile(
+                  $_.FullName,
+                  [ref]$tokens,
+                  [ref]$errors
+              ) | Out-Null
+
+              foreach ($parseError in $errors) {
+                  $failed = $true
+                  Write-Error (
+                      "{0}:{1}: {2}" -f
+                      $_.FullName,
+                      $parseError.Extent.StartLineNumber,
+                      $parseError.Message
+                  )
+              }
+          }
+          if ($failed) {
+              throw "Windows PowerShell 5.1 syntax validation failed."
+          }
+
+      - name: Parse with PowerShell 7
+        shell: pwsh
+        run: |
+          $failed = $false
+          Get-ChildItem -Path scripts -Filter *.ps1 -Recurse | ForEach-Object {
+              $tokens = $null
+              $errors = $null
+              [System.Management.Automation.Language.Parser]::ParseFile(
+                  $_.FullName,
+                  [ref]$tokens,
+                  [ref]$errors
+              ) | Out-Null
+
+              foreach ($parseError in $errors) {
+                  $failed = $true
+                  Write-Error (
+                      "{0}:{1}: {2}" -f
+                      $_.FullName,
+                      $parseError.Extent.StartLineNumber,
+                      $parseError.Message
+                  )
+              }
+          }
+          if ($failed) {
+              throw "PowerShell 7 syntax validation failed."
+          }

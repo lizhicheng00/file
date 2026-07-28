@@ -131,7 +131,7 @@ function Get-SteadySettings {
         [pscustomobject]@{ Category = "资源管理器"; Path = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"; Name = "HideFileExt"; Type = "DWord"; Value = 0; Description = "显示文件扩展名" }
         [pscustomobject]@{ Category = "资源管理器"; Path = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"; Name = "Hidden"; Type = "DWord"; Value = 1; Description = "显示隐藏文件" }
         [pscustomobject]@{ Category = "资源管理器"; Path = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"; Name = "ShowSuperHidden"; Type = "DWord"; Value = 0; Description = "继续隐藏受保护的系统文件" }
-        [pscustomobject]@{ Category = "资源管理器"; Path = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"; Name = "LaunchTo"; Type = "DWord"; Value = 1; Description = "资源管理器默认打开“此电脑”" }
+        [pscustomobject]@{ Category = "资源管理器"; Path = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"; Name = "LaunchTo"; Type = "DWord"; Value = 1; Description = "资源管理器默认打开此电脑" }
         [pscustomobject]@{ Category = "资源管理器"; Path = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"; Name = "ShowStatusBar"; Type = "DWord"; Value = 1; Description = "显示状态栏" }
         [pscustomobject]@{ Category = "资源管理器"; Path = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\CabinetState"; Name = "FullPath"; Type = "DWord"; Value = 1; Description = "标题栏显示完整路径" }
         [pscustomobject]@{ Category = "资源管理器"; Path = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"; Name = "SeparateProcess"; Type = "DWord"; Value = 1; Description = "文件夹窗口使用独立进程，提高故障隔离" }

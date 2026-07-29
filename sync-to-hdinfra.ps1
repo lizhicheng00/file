@@ -28,11 +28,16 @@ try {
 
     foreach ($item in $itemsToCopy) {
         $sourceItem = Join-Path $sourceRoot $item
+        $destinationItem = Join-Path $destinationRoot $item
+
+        if (Test-Path -LiteralPath $destinationItem) {
+            Remove-Item -LiteralPath $destinationItem -Recurse -Force
+        }
+
         if (-not (Test-Path -LiteralPath $sourceItem)) {
             continue
         }
 
-        $destinationItem = Join-Path $destinationRoot $item
         if (Test-Path -LiteralPath $sourceItem -PathType Container) {
             New-Item -ItemType Directory -Path $destinationItem -Force | Out-Null
             & robocopy $sourceItem $destinationItem /E /R:1 /W:1 /XJ /NFL /NDL /NJH /NJS /NC /NS /NP *> $null

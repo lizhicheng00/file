@@ -46,7 +46,6 @@ client.test("Tunnel creation succeeds", function () {
     client.assert(response.body.tunnelCode, "Missing tunnelCode");
 });
 client.global.set("tunnelId", response.body.tunnelId);
-client.global.set("tunnelCode", response.body.tunnelCode);
 %}
 
 ### 03 List tunnels
@@ -180,25 +179,7 @@ client.test("Gateway port policy is available", function () {
 });
 %}
 
-### 12 Legacy phase-one metering compatibility
-# Phase-two Gateway billing writes tunnel_metering directly and does not use this HTTP endpoint.
-POST {{apiBase}}/clusters/{{clusterId}}/metering
-Content-Type: application/json
-
-{
-  "tunnelCode": {{tunnelCode}},
-  "tunnelId": "{{tunnelId}}",
-  "usage": 1024
-}
-
-> {%
-client.test("Legacy metering report is accepted", function () {
-    client.assert(response.status === 200, "Expected HTTP 200");
-    client.assert(response.body.accepted === true, "Metering report was not accepted");
-});
-%}
-
-### 13 Update tunnel
+### 12 Update tunnel
 PUT {{apiBase}}/tunnels/{{tunnelId}}
 X-Namespace: {{namespace}}
 Content-Type: application/json
@@ -209,10 +190,10 @@ Content-Type: application/json
   "expiration": 96
 }
 
-### 14 Delete tunnel port
+### 13 Delete tunnel port
 DELETE {{apiBase}}/tunnels/{{tunnelId}}/ports/{{port}}
 X-Namespace: {{namespace}}
 
-### 15 Delete tunnel
+### 14 Delete tunnel
 DELETE {{apiBase}}/tunnels/{{tunnelId}}
 X-Namespace: {{namespace}}

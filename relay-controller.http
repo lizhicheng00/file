@@ -1,0 +1,218 @@
+# Run with the local "mtls" HTTP Client environment.
+# Keep client certificate paths and keys in an untracked http-client.private.env.json.
+
+@baseUrl = https://localhost:8443
+@apiBase = {{baseUrl}}/open-api-inner/v1/relay-controller
+@namespace = ns-local-scratch
+@clusterId = cluster-a
+@port = 8081
+
+### 00 OpenAPI YAML
+GET {{baseUrl}}/openapi.yaml
+
+> {%
+client.test("OpenAPI is available", function () {
+    client.assert(response.status === 200, "Expected HTTP 200");
+});
+%}
+
+### 01 Reset scratch namespace
+DELETE {{apiBase}}/tunnels
+X-Namespace: {{namespace}}
+
+> {%
+client.test("Namespace reset succeeds", function () {
+    client.assert(response.status === 200, "Expected HTTP 200");
+});
+%}
+
+### 02 Create tunnel and retain identifiers
+POST {{apiBase}}/tunnels
+X-Namespace: {{namespace}}
+Content-Type: application/json
+
+{
+  "name": "local-scratch-tunnel",
+  "description": "Created from IntelliJ HTTP Client",
+  "clusterId": "{{clusterId}}",
+  "expiration": 72,
+  "type": "bridge"
+}
+
+> {%
+client.test("Tunnel creation succeeds", function () {
+    client.assert(response.status === 200, "Expected HTTP 200");
+    client.assert(response.body.tunnelId, "Missing tunnelId");
+    client.assert(response.body.tunnelCode, "Missing tunnelCode");
+});
+client.global.set("tunnelId", response.body.tunnelId);
+client.global.set("tunnelCode", response.body.tunnelCode);
+%}
+
+### 03 List tunnels
+GET {{apiBase}}/tunnels?clusterId={{clusterId}}
+X-Namespace: {{namespace}}
+
+> {%
+client.test("Tunnel list contains data", function () {
+    client.assert(response.status === 200, "Expected HTTP 200");
+    client.assert(Array.isArray(response.body), "Expected an array");
+});
+%}
+
+### 04 Get tunnel detail
+GET {{apiBase}}/tunnels/{{tunnelId}}
+X-Namespace: {{namespace}}
+
+> {%
+client.test("Tunnel detail contains expiration state", function () {
+    client.assert(response.status === 200, "Expected HTTP 200");
+    client.assert(response.body.tunnelId === client.global.get("tunnelId"), "Unexpected tunnelId");
+    client.assert(response.body.expirationHours === 72, "Unexpected expirationHours");
+    client.assert(response.body.tunnelExpiration > 0, "Missing tunnelExpiration");
+});
+%}
+
+### 05 Issue host token
+POST {{apiBase}}/tunnels/{{tunnelId}}/token?scope=host
+X-Namespace: {{namespace}}
+
+> {%
+client.test("Host token is issued", function () {
+    client.assert(response.status === 200, "Expected HTTP 200");
+    client.assert(response.body.scope === "host", "Unexpected token scope");
+    client.assert(response.body.token, "Missing token");
+});
+%}
+
+### 06 Issue connect token
+POST {{apiBase}}/tunnels/{{tunnelId}}/token?scope=connect
+X-Namespace: {{namespace}}
+
+> {%
+client.test("Connect token is issued", function () {
+    client.assert(response.status === 200, "Expected HTTP 200");
+    client.assert(response.body.scope === "connect", "Unexpected token scope");
+    client.assert(response.body.token, "Missing token");
+});
+%}
+
+### 06a Issue token for cookie delivery
+POST {{apiBase}}/tunnels/{{tunnelId}}/token?scope=connect&forCookies=true
+X-Namespace: {{namespace}}
+
+> {%
+client.test("Cookie delivery token is issued", function () {
+    client.assert(response.status === 200, "Expected HTTP 200");
+    client.assert(response.body.token, "Missing token");
+});
+%}
+
+### 06b Get limits and balance
+GET {{apiBase}}/limits
+X-Namespace: {{namespace}}
+
+> {%
+client.test("Limits are available", function () {
+    client.assert(response.status === 200, "Expected HTTP 200");
+    client.assert(response.body.quotaBytes > 0, "Missing traffic quota");
+    client.assert(response.body.remainingBytes >= 0, "Missing remaining balance");
+    client.assert(response.body.activeTunnels === 1, "Expected one active tunnel");
+    client.assert(response.body.maxTunnels === 10, "Unexpected tunnel limit");
+    client.assert(response.body.maxPortsPerTunnel === 10, "Unexpected port limit");
+});
+%}
+
+### 07 Create tunnel port
+POST {{apiBase}}/tunnels/{{tunnelId}}/ports
+X-Namespace: {{namespace}}
+Content-Type: application/json
+
+{
+  "port": {{port}},
+  "protocol": "auto",
+  "allowAnonymous": false
+}
+
+> {%
+client.test("Tunnel port is created", function () {
+    client.assert(response.status === 200, "Expected HTTP 200");
+    client.assert(response.body.port === 8081, "Unexpected port");
+    client.assert(response.body.protocol === "auto", "Unexpected protocol");
+    client.assert(response.body.allowAnonymous === false, "Unexpected anonymous policy");
+});
+%}
+
+### 08 List tunnel ports
+GET {{apiBase}}/tunnels/{{tunnelId}}/ports
+X-Namespace: {{namespace}}
+
+> {%
+client.test("Tunnel port list contains the created port", function () {
+    client.assert(response.status === 200, "Expected HTTP 200");
+    client.assert(Array.isArray(response.body), "Expected an array");
+    client.assert(response.body.length === 1, "Expected one port");
+});
+%}
+
+### 09 Get tunnel port
+GET {{apiBase}}/tunnels/{{tunnelId}}/ports/{{port}}
+X-Namespace: {{namespace}}
+
+### 10 Update tunnel port
+PUT {{apiBase}}/tunnels/{{tunnelId}}/ports/{{port}}
+X-Namespace: {{namespace}}
+Content-Type: application/json
+
+{
+  "protocol": "https",
+  "allowAnonymous": true
+}
+
+### 11 Get Gateway tunnel port policy
+GET {{apiBase}}/clusters/{{clusterId}}/tunnels/{{tunnelId}}/ports/{{port}}
+
+> {%
+client.test("Gateway port policy is available", function () {
+    client.assert(response.status === 200, "Expected HTTP 200");
+    client.assert(response.body.protocol === "https", "Unexpected protocol");
+    client.assert(response.body.allowAnonymous === true, "Unexpected anonymous policy");
+});
+%}
+
+### 12 Legacy phase-one metering compatibility
+# Phase-two Gateway billing writes tunnel_metering directly and does not use this HTTP endpoint.
+POST {{apiBase}}/clusters/{{clusterId}}/metering
+Content-Type: application/json
+
+{
+  "tunnelCode": {{tunnelCode}},
+  "tunnelId": "{{tunnelId}}",
+  "usage": 1024
+}
+
+> {%
+client.test("Legacy metering report is accepted", function () {
+    client.assert(response.status === 200, "Expected HTTP 200");
+    client.assert(response.body.accepted === true, "Metering report was not accepted");
+});
+%}
+
+### 13 Update tunnel
+PUT {{apiBase}}/tunnels/{{tunnelId}}
+X-Namespace: {{namespace}}
+Content-Type: application/json
+
+{
+  "name": "local-scratch-tunnel-updated",
+  "description": "Updated from IntelliJ HTTP Client",
+  "expiration": 96
+}
+
+### 14 Delete tunnel port
+DELETE {{apiBase}}/tunnels/{{tunnelId}}/ports/{{port}}
+X-Namespace: {{namespace}}
+
+### 15 Delete tunnel
+DELETE {{apiBase}}/tunnels/{{tunnelId}}
+X-Namespace: {{namespace}}

@@ -1,56 +1,52 @@
 # Relay Controller 二期详细设计
 
+本文描述 Relay Controller 二期需要交付的业务能力，供 SE 评审设计、测试设计用例、关联服务开发对齐接口和数据契约。文档只描述 Relay Controller 的实现范围；Gateway 和 CLI 仅保留与本服务有关的协作边界。
+
 ## 1 价值描述
 
 ### 作为
 
-作为 DevBridge 控制面的架构师、测试人员和开发人员。
+作为 DevBridge 隧道服务的用户。
 
 ### 我要
 
-我要在一期 Tunnel、Port 和 Token 管理能力之上，增加账户、套餐、流量计量结算、额度查询和运行状态展示能力。
+我要在使用 Tunnel 时，能够查看账户限制和月度流量余额，并由系统自动完成流量统计、额度控制和运行状态展示。
 
 ### 从而
 
-- 用户可以明确看到当前限制和月度剩余额度；
-- Relay Gateway 可以按统一规则执行连接、带宽和流量限制；
-- 多 Region、多副本部署时，Tunnel 配额和流量结算仍保持一致；
-- 原始计量、分钟用量和月度余额形成可追溯的业务闭环。
+- 明确知道当前可以创建多少 Tunnel 和 Port；
+- 明确知道本月流量额度、剩余额度和重置时间；
+- 在多 Region、多副本部署下获得一致的配额和计量结果；
+- 在 Tunnel 详情中了解当前连接数和网络速率；
+- 超出限制时得到明确、可执行的拒绝结果。
 
 ### 现状
 
-一期已经提供 Tunnel、Port、Token 和 mTLS 能力，但缺少以下闭环：
+一期已经具备 Tunnel、Port 和 Token 管理能力，但还没有形成完整的资源与流量管理闭环：
 
-- `namespace` 尚未形成明确的计费账户；
-- Tunnel 和 Port 数量限制缺少统一套餐来源；
-- Gateway 产生的流量没有稳定、幂等的结算流程；
-- 用户无法查询月度额度和数据面限制；
-- Tunnel 详情缺少 Host、客户端连接数和实时速率。
-
-二期不再通过 Relay Controller 接收计量或状态上报。Relay Gateway 与 Relay Controller 共用数据库，由 Gateway 直接写入原始计量和最新运行状态，Controller 负责结算、查询和控制面校验。
+- `namespace` 没有对应的账户和套餐；
+- Tunnel、Port 和数据面限制缺少统一来源；
+- Gateway 产生的流量没有稳定的结算结果；
+- 用户无法查询本月额度和剩余流量；
+- Tunnel 详情无法展示 Gateway 的最新运行状态。
 
 ### 要求
 
-二期默认提供一套 `trial` 套餐：
+二期需要实现以下内容：
 
-| 项目 | 限制 |
+| 能力 | 默认规格 |
 | --- | ---: |
-| 每月流量 | 5 GiB |
+| 月度流量额度 | 5 GiB |
 | 每个账户的有效 Tunnel | 10 |
 | 每个 Tunnel 的 Port | 10 |
 | 每个 Tunnel 的 Host 连接 | 1 |
 | 每个 Tunnel 的带宽 | 5 MiB/s |
 | 每个 Port 的 HTTP 请求 | 500 次/分钟 |
 | 每个 Port 的并发连接 | 100 |
+| Gateway 计量周期 | 30 秒 |
+| Controller 结算周期 | 1 分钟 |
 
-同时满足以下要求：
-
-- Gateway 每 30 秒上报一次增量流量，Host 会话结束时补充上报；
-- Controller 每分钟结算一次，允许余额存在约一个结算周期的延迟；
-- 月度额度按 UTC 自然月计算，新月份创建新账期，不修改旧账期；
-- 多个 Controller 实例可以并行结算，不能重复计费；
-- Tunnel 详情返回 Gateway 最近一次上报的运行状态；
-- 二期保持一期 API 路径兼容，不新增计量和状态上报 HTTP 接口。
+月度额度按 UTC 自然月计算。Relay Controller 必须支持多副本运行，不能因为并发创建、重复上报或重复结算导致配额失效或流量重复累计。
 
 ## 2 功能描述
 
@@ -60,195 +56,210 @@
 
 - 一个 `namespace` 对应一个计费账户；
 - 账户首次使用时自动创建，并绑定默认 `trial` 套餐；
-- 套餐统一保存月度额度、Tunnel/Port 数量和数据面限制；
-- 账户可被禁用，禁用后不能创建 Tunnel 或签发 Token。
+- 套餐统一维护月度流量、Tunnel、Port、Host、带宽、HTTP 请求和连接限制；
+- 账户被禁用后，不能创建 Tunnel 或签发 Token。
 
 #### Tunnel 与 Port 配额
 
-- 创建 Tunnel 前校验账户状态和有效 Tunnel 数量；
-- 创建 Port 前校验所属 Tunnel 和当前 Port 数量；
-- 通过数据库行锁串行化同一账户或 Tunnel 的并发创建，避免多副本下突破配额；
-- 已过期或已删除的 Tunnel 不计入有效 Tunnel 数量。
+- 创建 Tunnel 时校验账户的有效 Tunnel 数量；
+- 创建 Port 时校验所属 Tunnel 的 Port 数量；
+- 并发请求到达不同 Controller 实例时，最终数量仍不能超过套餐上限；
+- 已过期或已删除的 Tunnel 不占用有效 Tunnel 配额。
 
 #### 流量计量与结算
 
-- Gateway 只上报本次周期新增的字节数，不上报会话累计值；
-- 原始数据写入 `tunnel_metering`，同一条上报可安全重试；
-- Controller 将原始数据按账户、Tunnel 和 UTC 分钟聚合；
-- 每批数据在同一事务内更新分钟用量、月度用量和原始数据结算标记；
-- 结算失败时整体回滚，原始数据保留为未结算状态，下一轮继续处理。
+- Gateway 在 Host 侧统计上下行流量；
+- Gateway 每 30 秒写入一次增量流量，Host 会话结束时补充写入剩余流量；
+- Relay Controller 每分钟读取未结算记录，生成分钟用量并累计月度用量；
+- 结算成功后标记原始记录，避免再次计费；
+- 结算失败时不产生部分结果，下一周期可继续处理。
 
 #### 限制与余额
 
-`GET /limits` 返回：
+新增限制查询能力，向用户返回：
 
 - 本月总额度、剩余额度和下次重置时间；
-- 当前有效 Tunnel 数量；
-- Tunnel、Port、Host、带宽、HTTP 请求和连接限制。
+- 当前有效 Tunnel 数量及上限；
+- Port、Host、带宽、HTTP 请求和连接上限。
 
-余额以已结算数据为准：
-
-```text
-remainingBytes = max(0, quotaBytes - billedBytes)
-```
+余额按已结算流量计算，因此正常情况下允许约一分钟的展示延迟。
 
 #### Tunnel 运行状态
 
-Gateway 将每个 Tunnel 的最新状态写入 `tunnel_runtime_status`。Tunnel 详情可返回：
+Gateway 保存每个 Tunnel 的最新运行状态，Relay Controller 在 Tunnel 详情中返回：
 
 - Host 连接数；
-- 客户端连接数，当前以活动 SSH Channel 数表示；
-- 当前上传、下载速率；
+- 客户端连接数，以活动 SSH Channel 数表示；
+- 当前上传和下载速率；
 - 状态上报时间。
 
-状态是运行观测数据，不作为计费依据。没有状态记录时，Tunnel 详情不返回 `status`；过期状态由定时清理任务删除。
+运行状态用于展示和运行判断，不作为流量计费依据。没有状态数据时，Tunnel 详情仍正常返回，只是不包含 `status`。
 
-#### Token 与额度
+#### Token 额度校验
 
-- `host` 和 `connect` Token 每次调用均重新签发；
-- Token 有固定配置的有效期，不跟随 Tunnel 剩余有效期变化；
+- `host` 和 `connect` Token 每次请求都重新签发；
+- Token 使用固定配置的有效期，不跟随 Tunnel 剩余有效期变化；
 - 签发前校验 Tunnel、账户状态和月度额度；
-- JWT 的 `aud` 为 `relay-gateway`，Gateway 必须校验签名、有效期、`aud`、Tunnel、Cluster 和 Scope；
-- `forCookies=true` 只标识交付方式，当前 Token 仍是签名 JWT，Claims 可被读取；
-- Cookie 写入以及后续可选的 JWE 加密由用户入口和 Gateway 协同实现，不属于本次已实现范围。
+- 月度额度耗尽时不再签发新 Token；
+- 已签发 Token 不会立即失效，正在运行的连接由 Gateway 根据共享额度状态处理。
 
 ### 2.2 约束与依赖
 
-#### 系统边界
+#### 职责边界
 
-| 组件 | 二期职责 |
+| 组件 | 职责 |
 | --- | --- |
-| Relay Controller | 账户和套餐、元数据配额、分钟结算、月度余额、Token 校验、限制查询、状态展示 |
-| Relay Gateway | Host 侧流量统计、计量和状态写库、单 Host 锁、带宽/HTTP/连接限流、超额拒绝和断连、原始计量老化 |
-| CLI | Echo、Ping、随机端口、Verbose 日志和本地 HTTP Server，不在 Controller 范围 |
+| Relay Controller | 账户和套餐、资源配额、流量结算、余额查询、Token 校验、Tunnel 状态展示 |
+| Relay Gateway | Host 侧流量统计、计量和状态写库、单 Host、带宽、HTTP 和连接限制、超额拒绝或断连 |
+| CLI | Echo、Ping、随机端口、Verbose 日志和本地 HTTP Server，不属于本项目 |
 
-#### 依赖
+#### 依赖与约束
 
-- Relay Controller 与 Relay Gateway 使用同一套 MySQL/MariaDB；
-- 数据库必须支持 InnoDB、事务、`FOR UPDATE SKIP LOCKED` 和唯一索引；
-- Cluster 基础数据必须提前存在，并正确绑定 Region；
-- 所有计量时间使用 Unix 秒，账期和分钟窗口统一按 UTC 计算；
-- Gateway 必须从 `tunnel` 表获取 `account_id` 和 `cluster_id`，不能信任外部传入的归属信息；
-- Controller 可多副本部署，不依赖单机内存保存计费状态。
+- Relay Controller 与 Gateway 共用 MySQL/MariaDB；
+- Gateway 直接写入原始计量和最新运行状态，Controller 不提供对应的上报 HTTP 接口；
+- Cluster 必须提前存在，并绑定正确的 Region；
+- Controller 只结算本 Region 所属 Cluster 的数据；
+- 计量时间统一使用 Unix 秒，分钟窗口和月度账期统一使用 UTC；
+- Gateway 必须从 `tunnel` 表取得 `account_id` 和 `cluster_id`，不能使用外部输入决定数据归属；
+- Gateway 只清理已结算且超过 7 天的原始计量数据；
+- 首版使用索引和 7 天保留策略控制计量表规模，暂不进行数据库分区。
 
-#### 一致性边界
+#### 安全边界
 
-- 余额基于已结算流量，默认最多延迟约一分钟；
-- Gateway 在新连接建立时检查额度，并根据共享账期状态执行拒绝或断连；
-- 已签发 JWT 不会因额度耗尽而自动失效，实时限制由 Gateway 执行；
-- Gateway 只能清理已结算且超过 7 天的原始计量数据；
-- 首版通过索引控制计量表查询范围，暂不分区；
-- mTLS 证明调用方服务身份，不直接证明 `X-Namespace` 的用户归属；生产入口仍需保证该请求头可信。
+- mTLS 用于确认调用方服务身份；
+- `X-Namespace` 仍需由可信入口校验并传递，不能仅依赖 mTLS 判断用户归属；
+- JWT 的 `aud` 为 `relay-gateway`，Gateway 需要校验签名、有效期、Audience、Tunnel、Cluster 和 Scope；
+- `forCookies=true` 只标识 Token 的交付方式，当前仍是签名 JWT，Claims 可以被读取；
+- Cookie 写入和可选的 JWE 加密不属于本次 Controller 交付范围。
 
 ## 3 实现设计
 
 ### 3.1 总体设计描述
 
-二期采用“Gateway 采集、数据库缓冲、Controller 结算、Gateway 执行”的闭环：
+二期采用“Gateway 采集、Controller 结算、双方共享结果”的设计：
 
 ```text
 Host 流量
    |
    v
-Relay Gateway --增量计量--> tunnel_metering
-   |                              |
-   |--最新状态--------------> tunnel_runtime_status
-                                  |
-                                  v
-                         Relay Controller 每分钟结算
-                                  |
-                  +---------------+---------------+
-                  v                               v
-          billing_usage_1m                 billing_period
-                                                  |
-                          +-----------------------+------------------+
-                          v                                          v
-                    GET /limits                              Token/连接额度判断
+Relay Gateway
+   |-- 增量流量 --> tunnel_metering
+   |-- 最新状态 --> tunnel_runtime_status
+                         |
+                         v
+                Relay Controller
+                   每分钟结算
+                         |
+             +-----------+-----------+
+             v                       v
+     billing_usage_1m          billing_period
+                                     |
+                         +-----------+-----------+
+                         v                       v
+                    GET /limits             Token 校验
 ```
 
-设计原则：
+核心设计原则：
 
-- 原始计量只追加，聚合结果单独保存；
-- 是否完成结算由原始记录的 `settled` 标记确定；
-- 同一批聚合和标记在一个事务中完成；
-- 配额来源统一为 `billing_plan`，避免 Controller 与 Gateway 各自维护常量；
-- Region 归属在 SQL 查询阶段过滤，不先查全量数据再在内存筛选。
+- 套餐是全部限制的唯一来源；
+- 原始计量与结算结果分开保存；
+- 一条原始计量最多结算一次；
+- 同一批计量要么全部结算成功，要么全部保留待重试；
+- 多个 Controller 实例可以共同处理积压，但不能重复累计；
+- Region 归属在读取计量数据时完成过滤。
 
 ### 3.2 业务流程
 
-#### 流程一：创建 Tunnel
+#### 流程一：账户与资源配额
 
-1. 校验 `X-Namespace`、Cluster 和请求参数；
-2. 不存在账户时创建账户并绑定默认套餐；
-3. 锁定账户记录；
-4. 查询当前有效 Tunnel 数量；
-5. 达到套餐上限时返回配额错误；
-6. 创建 Tunnel，并写入 `account_id`；
-7. 事务提交后释放账户锁。
+1. 用户首次使用时，根据 `namespace` 创建账户并绑定默认套餐；
+2. 创建 Tunnel 时统计该账户当前有效 Tunnel；
+3. 创建 Port 时统计该 Tunnel 当前 Port；
+4. 未达到限制时创建资源，达到限制时返回明确的配额错误；
+5. 并发创建仍以套餐上限为最终结果。
 
-验收重点：同一账户并发创建、多个 Controller 实例并发创建时，有效 Tunnel 总数不能超过 10。
+测试重点：
 
-#### 流程二：创建 Port
+- 第 10 个 Tunnel 成功，第 11 个失败；
+- 同一 Tunnel 的第 10 个 Port 成功，第 11 个失败；
+- 多实例并发创建后，数据总数不突破上限；
+- 过期和已删除 Tunnel 不占用 Tunnel 配额；
+- 禁用账户不能创建 Tunnel。
 
-1. 按 Region、Namespace 和 Tunnel ID 查询并锁定 Tunnel；
-2. 校验 Tunnel 未过期、Port 不重复；
-3. 查询套餐和当前 Port 数量；
-4. 达到上限时返回配额错误，否则创建 Port；
-5. 刷新 Tunnel 的活动过期时间。
+#### 流程二：Gateway 写入计量
 
-验收重点：同一 Tunnel 并发创建不同 Port 时，Port 总数不能超过 10。
-
-#### 流程三：Gateway 上报计量
-
-1. Gateway 每 30 秒计算自上次成功上报后的增量字节数；
-2. 从有效 Tunnel 记录中取得 `account_id`、`cluster_id` 和 `tunnel_id`；
-3. 写入一条 `tunnel_metering`；
+1. Gateway 计算距离上次成功上报后新增的流量；
+2. 根据有效 Tunnel 获取账户和 Cluster 归属；
+3. 写入 `tunnel_metering`；
 4. 写入失败时保留本地增量并重试；
-5. 精确重试必须复用相同的 `session_id`、`reported_at` 和 `usage_bytes`；
-6. Host 会话结束时上报尚未成功写入的剩余增量。
+5. 同一次重试使用相同的 `sessionId`、`reportedAt` 和 `usageBytes`；
+6. Host 会话结束时写入尚未上报的剩余流量。
 
-验收重点：网络重试不能重复计费；同一会话在同一秒最多形成一条上报。
+测试重点：
 
-#### 流程四：每分钟结算
+- 正常周期上报能够连续写入；
+- 完全相同的重试只保留一条记录；
+- 不同时间的增量可以分别写入；
+- 无效、已删除或归属不一致的 Tunnel 不能写入；
+- 会话结束上报不会与同秒周期上报重复。
 
-1. 每个 Controller 实例按批次锁定本 Region 的未结算记录；
-2. `SKIP LOCKED` 跳过其他实例正在处理的记录；
-3. 按账户、Tunnel 和分钟窗口合并字节数；
-4. 创建或读取对应 UTC 月度账期；
-5. 累加 `billing_period`、`billing_usage_1m` 和 Tunnel 已用流量；
-6. 将本批原始记录更新为 `settled=1`；
-7. 提交事务，并继续处理下一批，直到当前积压不足一个批次。
+#### 流程三：分钟结算
 
-验收重点：结算中途异常必须全部回滚；多实例并行结算后，聚合总量必须等于原始未重复记录总量。
+1. Controller 每分钟获取本 Region 未结算的原始数据；
+2. 按账户、Tunnel 和分钟合并流量；
+3. 将流量累计到分钟用量和对应月度账期；
+4. 同步累计 Tunnel 已用流量；
+5. 完成后将本批原始数据标记为已结算；
+6. 当前积压较多时，继续分批处理直到本轮完成。
 
-#### 流程五：额度查询与执行
+测试重点：
 
-1. Controller 根据当前 UTC 时间定位自然月账期；
-2. 读取套餐额度和已结算字节数；
-3. 返回余额、重置时间和各项限制；
-4. Token 签发时拒绝已禁用或已超额账户；
-5. Gateway 在连接建立和运行过程中读取共享额度状态，执行拒绝、限速或断连。
+- 原始流量总和与分钟、月度累计结果一致；
+- 同一条原始计量不会重复结算；
+- 结算中途失败后不产生部分账单；
+- 多实例同时结算时结果不重不漏；
+- 非本 Region 的计量不由当前 Controller 处理；
+- 延迟到达的数据按 `reportedAt` 归入正确分钟和月份。
 
-验收重点：跨月后自动使用新账期，旧账期数据不清零、不覆盖。
+#### 流程四：月度余额
 
-#### 流程六：运行状态展示
+1. 账户首次查询或产生计量时，创建当前 UTC 月度账期；
+2. 套餐额度作为该账期的额度快照；
+3. 已结算流量持续累计到当前账期；
+4. 下月自动创建新账期，旧账期保持不变；
+5. `/limits` 返回当前账期余额和下月开始时间。
 
-1. Gateway 按 Tunnel 覆盖写入最新状态，只接受时间不早于当前记录的上报；
-2. Controller 查询 Tunnel 详情时关联最新状态；
-3. 状态不存在时仅返回 Tunnel 元数据；
-4. 清理任务删除已删除 Tunnel 的状态和超过保留时间的状态。
+测试重点：
 
-验收重点：乱序上报不能覆盖较新的状态；状态缺失不能影响 Tunnel 详情查询。
+- `remainingBytes` 不小于 0；
+- 月末与月初数据分别进入正确账期；
+- 套餐后续调整不改变已经创建的历史账期快照；
+- 余额耗尽后 Token 签发被拒绝。
+
+#### 流程五：运行状态
+
+1. Gateway 按 Tunnel 保存最新状态；
+2. 较旧的乱序状态不能覆盖较新的状态；
+3. Controller 查询详情时返回当前状态；
+4. 状态缺失不影响 Tunnel 元数据查询；
+5. 超过保留时间或 Tunnel 已不存在的状态由清理任务删除。
+
+测试重点：
+
+- 连接数、上下行速率和时间能够正确返回；
+- 乱序写入后仍保留最新状态；
+- 无状态时响应中不包含 `status`；
+- 陈旧状态能够被清理。
 
 ### 3.3 关键业务算法
 
-#### 计量幂等键
+#### 计量幂等
 
 ```text
-uniqueKey = tunnelId + sessionId + reportedAt
+唯一标识 = tunnelId + sessionId + reportedAt
 ```
 
-`usageBytes` 表示增量值。Gateway 对同一次重试必须保持幂等键和流量值不变，唯一索引负责消除重复写入。
+`usageBytes` 是本次新增流量，不是会话累计流量。Gateway 重试同一次上报时必须保持唯一标识和流量值不变。
 
 #### 分钟归档
 
@@ -256,7 +267,7 @@ uniqueKey = tunnelId + sessionId + reportedAt
 windowStart = reportedAt - reportedAt % 60
 ```
 
-同一账户、Tunnel、分钟内的计量记录合并到一条 `billing_usage_1m`。
+同一账户、Tunnel 和分钟内的原始计量合并为一条分钟用量。
 
 #### 月度账期
 
@@ -265,47 +276,45 @@ periodStart = UTC 当月 1 日 00:00:00
 periodEnd   = UTC 下月 1 日 00:00:00
 ```
 
-流量按 `reportedAt` 所在月份归档。跨月时创建新账期，不执行“清零旧记录”的定时任务。
+流量按 `reportedAt` 所在月份结算。进入新月份时创建新账期，不清空或覆盖旧账期。
 
-#### 多副本结算
+#### 余额计算
 
-- `FOR UPDATE` 在事务结束时释放行锁；
-- `SKIP LOCKED` 使不同实例取得不同原始记录，避免互相等待；
-- 聚合更新和 `settled` 标记共享事务，提交成功后才视为完成；
-- 事务回滚后记录仍为未结算，可在下一轮重新处理。
+```text
+remainingBytes = max(0, quotaBytes - billedBytes)
+```
 
-#### 配额并发控制
+`billedBytes` 只包含已结算数据，允许与 Gateway 实时流量存在约一分钟差异。
 
-- Tunnel 配额：锁定 `billing_account` 后统计并创建；
-- Port 配额：锁定所属 `tunnel` 后统计并创建；
-- 锁的粒度与配额归属一致，避免使用单 JVM 锁。
+#### 结算一致性
+
+- 原始记录、分钟用量和月度用量在同一结算事务内处理；
+- 只有聚合结果全部成功后，原始记录才变为已结算；
+- 失败后原始记录保持可重试；
+- 多实例处理时，每条原始记录只允许一个实例完成结算。
 
 ### 3.4 关键代码
 
-关键实现入口如下：
+本节只列出业务入口，具体实现以代码为准。
 
-| 类 | 职责 |
+| 类 | 业务职责 |
 | --- | --- |
-| `BillingService` | 创建/锁定账户、读取套餐、创建月度账期、计算余额 |
-| `BillingSettlementJob` | 每分钟触发结算并排空当前积压 |
-| `BillingSettlementService` | 锁定、聚合、入账和标记原始计量 |
-| `LimitsAppService` | 组装限制与余额 |
-| `TunnelAppService` | Tunnel 配额、Token 额度校验、详情状态查询 |
-| `TunnelPortAppService` | Port 配额和 Gateway Port 策略查询 |
-| `TunnelCleanupJob` | 过期 Tunnel 和陈旧运行状态清理 |
+| `BillingService` | 账户、套餐、账期和余额 |
+| `BillingSettlementJob` | 每分钟启动结算 |
+| `BillingSettlementService` | 计量聚合、入账和完成标记 |
+| `LimitsAppService` | 限制与余额响应 |
+| `TunnelAppService` | Tunnel 配额、Token 额度校验、状态查询 |
+| `TunnelPortAppService` | Port 配额 |
+| `TunnelCleanupJob` | 过期 Tunnel 和陈旧状态清理 |
 
-结算事务只保留一个核心原则：
+关键处理顺序：
 
 ```text
-begin transaction
-  records = lock unsettled rows skip locked
-  aggregate records by account + tunnel + minute
-  update monthly period and minute usage
-  mark the same records settled
-commit
+读取未结算计量
+  -> 按分钟合并
+  -> 累计月度与分钟用量
+  -> 标记原始计量已结算
 ```
-
-任何一步失败都回滚，不单独提交聚合结果或结算标记。
 
 ### 3.5 接口定义
 
@@ -315,24 +324,22 @@ commit
 /open-api-inner/v1/relay-controller
 ```
 
-二期相关 HTTP 接口：
+只列出二期新增或行为发生变化的接口：
 
-| 方法与路径 | 调用方 | 主要输入 | 主要输出与规则 |
-| --- | --- | --- | --- |
-| `POST /tunnels` | 用户入口 | `X-Namespace`、Cluster、Tunnel 信息 | 创建账户关联并校验最多 10 个有效 Tunnel |
-| `GET /tunnels` | 用户入口 | `X-Namespace`、可选 `clusterId` | Tunnel 列表，包含 `portCount` 和过期信息 |
-| `GET /tunnels/{tunnelId}` | 用户入口 | `X-Namespace`、Tunnel ID | Tunnel 详情；有最新状态时返回 `status` |
-| `POST /tunnels/{tunnelId}/token` | 用户入口 | `scope=host\|connect`、可选 `forCookies` | 每次返回新 Token；超额或账户禁用时拒绝 |
-| `POST /tunnels/{tunnelId}/ports` | 用户入口 | Port、Protocol、匿名策略 | 校验每个 Tunnel 最多 10 个 Port |
-| `GET /clusters/{clusterId}/tunnels/{tunnelId}/ports/{port}` | Gateway | Cluster、Tunnel、Port | 返回 Protocol 和匿名访问策略 |
-| `GET /limits` | 用户入口 | `X-Namespace` | 返回月度余额、重置时间和套餐限制 |
+| 方法与路径 | 二期变化 | 主要响应或错误 |
+| --- | --- | --- |
+| `GET /limits` | 新增限制与月度余额查询 | 返回额度、余额、重置时间和套餐限制 |
+| `GET /tunnels/{tunnelId}` | 详情新增可选 `status` | 返回连接数、实时速率和状态时间 |
+| `POST /tunnels` | 增加账户绑定、账户状态和 Tunnel 配额校验 | 超过套餐上限时返回配额错误 |
+| `POST /tunnels/{tunnelId}/ports` | 增加 Port 配额校验 | 超过单 Tunnel 上限时返回配额错误 |
+| `POST /tunnels/{tunnelId}/token` | 增加账户状态和月度额度校验 | 禁用或超额时拒绝签发 |
 
-`GET /limits` 的关键返回字段：
+`GET /limits` 关键返回字段：
 
 | 字段 | 含义 |
 | --- | --- |
 | `resetAt` | 当前 UTC 月度账期结束时间，Unix 秒 |
-| `quotaBytes` | 本账期总额度 |
+| `quotaBytes` | 本月总额度 |
 | `remainingBytes` | 已结算口径的剩余额度 |
 | `activeTunnels` / `maxTunnels` | 当前有效 Tunnel 数量及上限 |
 | `maxPortsPerTunnel` | 单 Tunnel Port 上限 |
@@ -341,87 +348,61 @@ commit
 | `maxHttpRequestsPerMinutePerPort` | 单 Port HTTP 请求上限 |
 | `maxConnectionsPerPort` | 单 Port 并发连接上限 |
 
-Gateway 数据库写入契约：
+Tunnel 详情新增 `status`：
 
-| 目标表 | 写入方式 | 约束 |
+| 字段 | 含义 |
+| --- | --- |
+| `hostConnectionCount` | 当前 Host 连接数 |
+| `clientConnectionCount` | 当前活动 SSH Channel 数 |
+| `uploadBytesPerSecond` | 当前上传速率 |
+| `downloadBytesPerSecond` | 当前下载速率 |
+| `reportedAt` | Gateway 最近状态时间，Unix 秒 |
+
+Gateway 与 Controller 的数据库协作契约：
+
+| 数据 | Gateway 行为 | Controller 行为 |
 | --- | --- | --- |
-| `tunnel_metering` | 每 30 秒追加增量记录，会话结束补充写入 | 从 `tunnel` 取得账户和 Cluster；精确重试保持相同幂等键 |
-| `tunnel_runtime_status` | 按 `tunnel_id` 更新最新值 | 仅接受不早于现有 `reported_at` 的状态 |
-| `tunnel` | Host 活动期间按粒度刷新过期时间 | 仅更新有效且属于当前 Cluster 的 Tunnel |
+| 原始计量 | 每 30 秒和会话结束时写入增量 | 每分钟结算 |
+| 运行状态 | 按 Tunnel 保存最新状态 | 在 Tunnel 详情中读取 |
+| 月度额度 | 连接建立和运行时读取 | 生成并更新账期 |
 
-Relay Controller 不提供 `/metering` 或 `/tunnels/status` 上报接口。OpenAPI YAML 是 HTTP 接口的最终契约。
+Relay Controller 不新增 `/metering` 或 `/tunnels/status`。HTTP 请求和响应以 OpenAPI YAML 为最终契约。
 
 ### 3.6 数据表设计
 
+#### 表关系
+
+```text
+namespace
+   |
+billing_account --> billing_plan
+   |
+   +--> tunnel --> tunnel_runtime_status
+   |
+   +--> tunnel_metering --> billing_usage_1m
+   |
+   +--> billing_period
+```
+
 #### 二期新增及变更表
 
-| 表 | 作用 | 主键/唯一约束 | 生命周期 |
+| 表 | 用途 | 关键字段 | 数据生命周期 |
 | --- | --- | --- | --- |
-| `billing_plan` | 套餐及全部限制的统一来源 | `plan_code` | 配置数据，长期保留 |
-| `billing_account` | `namespace` 与套餐的绑定 | `_id`；`namespace` 唯一 | 账户数据，长期保留 |
-| `billing_period` | 账户 UTC 月度额度和已结算流量 | `account_id + period_start` | 月度账单结果，长期保留 |
-| `tunnel_metering` | Gateway 原始增量计量 | `_id`；`tunnel_id + session_id + reported_at` 唯一 | 已结算数据保留 7 天后由 Gateway 分批清理 |
-| `billing_usage_1m` | Tunnel 分钟级结算结果 | `account_id + tunnel_id + window_start` | 计费聚合结果，长期保留 |
-| `tunnel_runtime_status` | Tunnel 最新运行状态 | `tunnel_id` | 覆盖更新，陈旧或孤立状态定时删除 |
-| `tunnel` | 新增账户归属 | 原有主键；新增 `account_id` 索引 | 延续一期生命周期 |
+| `billing_plan` | 套餐和限制的统一来源 | `plan_code` 及各项限制 | 长期保留 |
+| `billing_account` | `namespace` 与套餐绑定 | `_id`、`namespace`、`plan_code`、`status` | 长期保留 |
+| `billing_period` | UTC 月度额度与已结算流量 | `account_id`、起止时间、额度、已用流量 | 长期保留 |
+| `tunnel_metering` | Gateway 原始增量计量 | 归属、会话、流量、上报时间、结算状态 | 已结算数据保留 7 天 |
+| `billing_usage_1m` | Tunnel 分钟用量 | 账户、Tunnel、分钟、流量 | 长期保留 |
+| `tunnel_runtime_status` | Tunnel 最新运行状态 | 连接数、速率、上报时间 | 覆盖更新，陈旧数据清理 |
+| `tunnel` | 增加账户归属 | 新增 `account_id` | 延续一期生命周期 |
 
-#### 核心字段
+#### 唯一性与查询要求
 
-`billing_account`
+- `billing_account.namespace` 唯一，保证一个 Namespace 只对应一个账户；
+- `billing_period(account_id, period_start)` 唯一，保证一个账户每月只有一个账期；
+- `tunnel_metering(tunnel_id, session_id, reported_at)` 唯一，保证上报重试幂等；
+- `billing_usage_1m(account_id, tunnel_id, window_start)` 唯一，保证分钟结果可持续累计；
+- `tunnel_runtime_status.tunnel_id` 唯一，只保存每个 Tunnel 的最新状态；
+- 未结算计量、账户时间范围和陈旧状态需要对应索引支持。
 
-| 字段 | 说明 |
-| --- | --- |
-| `_id` | 账户内部 ID |
-| `namespace` | 用户隔离范围，一个 Namespace 一个账户 |
-| `plan_code` | 当前套餐 |
-| `status` | `active` 或 `disabled` |
-
-`billing_period`
-
-| 字段 | 说明 |
-| --- | --- |
-| `account_id` | 账户 ID |
-| `period_start` / `period_end` | UTC 月度区间，左闭右开 |
-| `quota_bytes` | 创建账期时保存的额度快照 |
-| `billed_bytes` | 已结算流量 |
-
-`tunnel_metering`
-
-| 字段 | 说明 |
-| --- | --- |
-| `_id` | 结算批次选择和排序使用的自增 ID |
-| `account_id` / `cluster_id` / `tunnel_id` | 计量归属 |
-| `session_id` | Host 连接会话 ID |
-| `usage_bytes` | 本次新增流量 |
-| `reported_at` | Gateway 统计时间，Unix 秒 |
-| `created_at` | 数据库写入时间，Unix 秒 |
-| `settled` | `0` 未结算，`1` 已结算 |
-
-`billing_usage_1m`
-
-| 字段 | 说明 |
-| --- | --- |
-| `account_id` / `tunnel_id` | 用量归属 |
-| `window_start` | UTC 分钟起始时间 |
-| `usage_bytes` | 该分钟已结算流量 |
-
-`tunnel_runtime_status`
-
-| 字段 | 说明 |
-| --- | --- |
-| `tunnel_id` | Tunnel ID |
-| `host_connection_count` | 当前 Host 连接数 |
-| `client_connection_count` | 当前活动 SSH Channel 数 |
-| `upload_bytes_per_second` | 当前上传速率 |
-| `download_bytes_per_second` | 当前下载速率 |
-| `reported_at` | Gateway 状态时间 |
-
-#### 索引与容量
-
-- `tunnel_metering(settled, created_at, _id)` 支持按状态、时间和批次顺序结算；
-- `tunnel_metering(account_id, reported_at)` 支持账户和时间范围核查；
-- `billing_usage_1m(account_id, window_start)` 支持账户分钟用量查询；
-- `tunnel_runtime_status(reported_at)` 支持陈旧状态清理；
-- 首版不做分区。只有当 7 天保留量使索引和批量清理无法满足目标时，再按实际容量评估时间分区。
-
-历史一期 `metering` 表由 V3 迁移删除，避免两套计量口径并存。
+历史一期 `metering` 表由二期迁移删除，避免两套计量口径同时存在。

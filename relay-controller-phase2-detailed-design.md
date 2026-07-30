@@ -123,7 +123,7 @@ Relay Gateway
 | 创建 Tunnel | 用户创建 Tunnel | 创建或读取账户，校验状态和有效 Tunnel 数量 | 成功创建并绑定账户，或返回配额错误 |
 | 创建 Port | 用户创建 Port | 校验 Tunnel 和当前 Port 数量 | 成功创建，或返回配额错误 |
 | 写入计量 | Gateway 周期上报或 Host 会话结束 | 写入本周期增量，重复请求保持幂等 | 形成待结算原始记录 |
-| 分钟结算 | Controller 定时任务 | 按账户、Tunnel、分钟聚合并累计月度用量 | 原始记录变为已结算 |
+| 分钟结算 | Controller 定时任务 | 分别聚合账户月用量、Tunnel 分钟用量和 Tunnel 总用量 | 原始记录变为已结算 |
 | 查询余额 | 用户查询 Limits 或申请 Token | 读取当前 UTC 账期和套餐 | 返回余额，或在超额时拒绝 Token |
 | 查询状态 | 用户查询 Tunnel 详情 | 读取 Gateway 最新状态 | 有状态则返回，无状态则仅返回 Tunnel |
 

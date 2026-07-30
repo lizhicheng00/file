@@ -75,8 +75,10 @@
 - Controller 只处理本 Region 所属 Cluster 的数据；
 - 时间统一使用 Unix 秒，账期和分钟窗口使用 UTC；
 - Gateway 从 `tunnel` 表取得 `account_id` 和 `cluster_id`，外部输入不能决定计量归属；
+- Gateway 不写入超过 7 天的历史计量记录；
 - Controller 不提供计量或状态上报 HTTP 接口；
 - 原始计量按 `reported_at` 小时分区；Controller 只删除超过 7 天且没有未结算数据的分区。
+- Controller 数据库账号需具备 `tunnel_metering` 的 `ALTER` 权限。
 
 #### 安全边界
 
@@ -169,7 +171,7 @@ remainingBytes = max(0, quotaBytes - billedBytes)
 | `BillingService` | 账户、套餐、账期和余额 |
 | `BillingSettlementJob` | 周期触发结算 |
 | `BillingSettlementService` | 聚合计量并更新结算结果 |
-| `MeteringPartitionJob` | 创建和回收原始计量小时分区 |
+| `MeteringPartitionManager` | 每小时创建和回收原始计量分区 |
 | `LimitsAppService` | 组装限制与余额 |
 | `TunnelAppService` | Tunnel 配额、Token 校验和状态查询 |
 | `TunnelPortAppService` | Port 配额 |

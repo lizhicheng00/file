@@ -249,6 +249,6 @@ Controller 不新增 `/metering` 或 `/tunnels/status`。HTTP 契约以 OpenAPI 
 | `reported_at` / `created_at` | Gateway 上报时间和入库时间 |
 | `settled` | 是否已完成结算 |
 
-单个 Controller 实例每小时预建未来 2 小时分区，并保留 `p_future` 接收边界外数据；超过 7 天的分区直接删除。
+Controller 每小时预建未来 2 小时分区，并保留 `p_future` 接收边界外数据。多副本通过数据库锁保证每轮只有一个实例执行；超过 7 天的分区直接删除。
 
 历史一期 `metering` 表由二期迁移删除，避免两套计量口径并存。

@@ -172,7 +172,7 @@ remainingBytes = max(0, quotaBytes - billedBytes)
 | `LimitsAppService` | 组装限制与余额 |
 | `TunnelAppService` | Tunnel 配额、Token 校验和状态查询 |
 | `TunnelPortAppService` | Port 配额 |
-| `TunnelCleanupJob` | 清理过期 Tunnel 和陈旧状态 |
+| `TunnelCleanupJob` | 清理过期 Tunnel 及其 Port 和运行状态 |
 
 ### 3.5 接口定义
 
@@ -233,7 +233,7 @@ Controller 不新增 `/metering` 或 `/tunnels/status`。HTTP 契约以 OpenAPI 
 | `billing_period` | 月度额度和累计用量 | 账户与月份唯一 | 长期保留 |
 | `tunnel_metering` | 原始增量计量 | Tunnel、会话与上报时间唯一 | 已结算数据保留 7 天 |
 | `billing_usage_1m` | Tunnel 分钟用量 | 账户、Tunnel 与分钟唯一 | 长期保留 |
-| `tunnel_runtime_status` | Tunnel 最新状态 | `tunnel_id` 唯一 | 覆盖更新，陈旧数据清理 |
+| `tunnel_runtime_status` | Tunnel 最新状态 | `tunnel_id` 唯一 | 覆盖更新，随 Tunnel 删除 |
 | `tunnel` | 增加账户归属 | 新增 `account_id` 及索引 | 延续一期生命周期 |
 
 `tunnel_metering` 核心字段：
@@ -246,6 +246,6 @@ Controller 不新增 `/metering` 或 `/tunnels/status`。HTTP 契约以 OpenAPI 
 | `reported_at` / `created_at` | Gateway 上报时间和入库时间 |
 | `settled` | 是否已完成结算 |
 
-未结算计量、账户时间范围和陈旧状态需要相应索引。只有 7 天保留量仍无法满足容量和清理要求时，再评估时间分区。
+未结算计量和账户时间范围需要相应索引。只有 7 天保留量仍无法满足容量和清理要求时，再评估时间分区。
 
 历史一期 `metering` 表由二期迁移删除，避免两套计量口径并存。

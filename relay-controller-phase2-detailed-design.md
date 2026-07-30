@@ -76,7 +76,7 @@
 - 时间统一使用 Unix 秒，账期和分钟窗口使用 UTC；
 - Gateway 从 `tunnel` 表取得 `account_id` 和 `cluster_id`，外部输入不能决定计量归属；
 - Controller 不提供计量或状态上报 HTTP 接口；
-- 原始计量首版采用索引和 7 天保留策略，暂不进行数据库分区。
+- 原始计量按 `reported_at` 小时分区；Controller 只删除超过 7 天且没有未结算数据的分区。
 
 #### 安全边界
 
@@ -169,6 +169,7 @@ remainingBytes = max(0, quotaBytes - billedBytes)
 | `BillingService` | 账户、套餐、账期和余额 |
 | `BillingSettlementJob` | 周期触发结算 |
 | `BillingSettlementService` | 聚合计量并更新结算结果 |
+| `MeteringPartitionJob` | 创建和回收原始计量小时分区 |
 | `LimitsAppService` | 组装限制与余额 |
 | `TunnelAppService` | Tunnel 配额、Token 校验和状态查询 |
 | `TunnelPortAppService` | Port 配额 |
@@ -231,7 +232,7 @@ Controller 不新增 `/metering` 或 `/tunnels/status`。HTTP 契约以 OpenAPI 
 | `billing_plan` | 套餐和限制 | `plan_code` 唯一 | 长期保留 |
 | `billing_account` | `namespace` 与套餐绑定 | `namespace` 唯一 | 长期保留 |
 | `billing_period` | 月度额度和累计用量 | 账户与月份唯一 | 长期保留 |
-| `tunnel_metering` | 原始增量计量 | Tunnel、会话与上报时间唯一 | 已结算数据保留 7 天 |
+| `tunnel_metering` | 原始增量计量 | 按上报时间小时分区；Tunnel、会话与上报时间唯一 | 已结算数据保留 7 天 |
 | `billing_usage_1m` | Tunnel 分钟用量 | 账户、Tunnel 与分钟唯一 | 长期保留 |
 | `tunnel_runtime_status` | Tunnel 最新状态 | `tunnel_id` 唯一 | 覆盖更新，随 Tunnel 删除 |
 | `tunnel` | 增加账户归属 | 新增 `account_id` 及索引 | 延续一期生命周期 |
@@ -246,6 +247,6 @@ Controller 不新增 `/metering` 或 `/tunnels/status`。HTTP 契约以 OpenAPI 
 | `reported_at` / `created_at` | Gateway 上报时间和入库时间 |
 | `settled` | 是否已完成结算 |
 
-未结算计量和账户时间范围需要相应索引。只有 7 天保留量仍无法满足容量和清理要求时，再评估时间分区。
+Controller 每小时预建未来 2 小时分区，并保留 `p_future` 接收边界外数据。多副本通过数据库锁串行维护；超过 7 天的分区只有在全部结算后才会被删除。
 
 历史一期 `metering` 表由二期迁移删除，避免两套计量口径并存。

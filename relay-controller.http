@@ -16,6 +16,20 @@ client.test("OpenAPI is available", function () {
 });
 %}
 
+### 00a Issue namespace access token
+POST {{apiBase}}/auth/token
+X-Namespace: {{namespace}}
+
+> {%
+client.test("Namespace access token is issued", function () {
+    client.assert(response.status === 200, "Expected HTTP 200");
+    client.assert(response.body.namespace === "ns-local-scratch", "Unexpected namespace");
+    client.assert(response.body.scope === "devbridge", "Unexpected token scope");
+    client.assert(response.body.token, "Missing token");
+});
+client.global.set("authToken", response.body.token);
+%}
+
 ### 01 Reset scratch namespace
 DELETE {{apiBase}}/tunnels
 X-Namespace: {{namespace}}

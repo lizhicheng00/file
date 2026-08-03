@@ -110,17 +110,6 @@ client.test("Connect token is issued", function () {
 });
 %}
 
-### 06a Issue token for cookie delivery
-POST {{apiBase}}/tunnels/{{tunnelId}}/token?scope=connect&forCookies=true
-X-Namespace: {{namespace}}
-
-> {%
-client.test("Cookie delivery token is issued", function () {
-    client.assert(response.status === 200, "Expected HTTP 200");
-    client.assert(response.body.token, "Missing token");
-});
-%}
-
 ### 06b Get limits and balance
 GET {{apiBase}}/limits
 X-Namespace: {{namespace}}

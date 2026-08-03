@@ -1,5 +1,5 @@
 # Run with the local "mtls" HTTP Client environment.
-# Keep client certificate paths and keys in an untracked http-client.private.env.json.
+# Keep client certificate paths and apiKey in an untracked http-client.private.env.json.
 
 @baseUrl = https://localhost:8443
 @apiBase = {{baseUrl}}/open-api-inner/v1/relay-controller
@@ -16,22 +16,9 @@ client.test("OpenAPI is available", function () {
 });
 %}
 
-### 00a Issue namespace access token
-POST {{apiBase}}/auth/token
-X-Namespace: {{namespace}}
-
-> {%
-client.test("Namespace access token is issued", function () {
-    client.assert(response.status === 200, "Expected HTTP 200");
-    client.assert(response.body.namespace === "ns-local-scratch", "Unexpected namespace");
-    client.assert(response.body.scope === "devbridge", "Unexpected token scope");
-    client.assert(response.body.token, "Missing token");
-});
-client.global.set("authToken", response.body.token);
-%}
-
 ### 01 Reset scratch namespace
 DELETE {{apiBase}}/tunnels
+X-API-Key: {{apiKey}}
 X-Namespace: {{namespace}}
 
 > {%
@@ -42,6 +29,7 @@ client.test("Namespace reset succeeds", function () {
 
 ### 02 Create tunnel and retain identifiers
 POST {{apiBase}}/tunnels
+X-API-Key: {{apiKey}}
 X-Namespace: {{namespace}}
 Content-Type: application/json
 
@@ -64,6 +52,7 @@ client.global.set("tunnelId", response.body.tunnelId);
 
 ### 03 List tunnels
 GET {{apiBase}}/tunnels?clusterId={{clusterId}}
+X-API-Key: {{apiKey}}
 X-Namespace: {{namespace}}
 
 > {%
@@ -75,6 +64,7 @@ client.test("Tunnel list contains data", function () {
 
 ### 04 Get tunnel detail
 GET {{apiBase}}/tunnels/{{tunnelId}}
+X-API-Key: {{apiKey}}
 X-Namespace: {{namespace}}
 
 > {%
@@ -88,6 +78,7 @@ client.test("Tunnel detail contains expiration state", function () {
 
 ### 05 Issue host token
 POST {{apiBase}}/tunnels/{{tunnelId}}/token?scope=host
+X-API-Key: {{apiKey}}
 X-Namespace: {{namespace}}
 
 > {%
@@ -100,6 +91,7 @@ client.test("Host token is issued", function () {
 
 ### 06 Issue connect token
 POST {{apiBase}}/tunnels/{{tunnelId}}/token?scope=connect
+X-API-Key: {{apiKey}}
 X-Namespace: {{namespace}}
 
 > {%
@@ -112,6 +104,7 @@ client.test("Connect token is issued", function () {
 
 ### 06b Get limits and balance
 GET {{apiBase}}/limits
+X-API-Key: {{apiKey}}
 X-Namespace: {{namespace}}
 
 > {%
@@ -127,6 +120,7 @@ client.test("Limits are available", function () {
 
 ### 07 Create tunnel port
 POST {{apiBase}}/tunnels/{{tunnelId}}/ports
+X-API-Key: {{apiKey}}
 X-Namespace: {{namespace}}
 Content-Type: application/json
 
@@ -147,6 +141,7 @@ client.test("Tunnel port is created", function () {
 
 ### 08 List tunnel ports
 GET {{apiBase}}/tunnels/{{tunnelId}}/ports
+X-API-Key: {{apiKey}}
 X-Namespace: {{namespace}}
 
 > {%
@@ -159,10 +154,12 @@ client.test("Tunnel port list contains the created port", function () {
 
 ### 09 Get tunnel port
 GET {{apiBase}}/tunnels/{{tunnelId}}/ports/{{port}}
+X-API-Key: {{apiKey}}
 X-Namespace: {{namespace}}
 
 ### 10 Update tunnel port
 PUT {{apiBase}}/tunnels/{{tunnelId}}/ports/{{port}}
+X-API-Key: {{apiKey}}
 X-Namespace: {{namespace}}
 Content-Type: application/json
 
@@ -184,6 +181,7 @@ client.test("Gateway port policy is available", function () {
 
 ### 12 Update tunnel
 PUT {{apiBase}}/tunnels/{{tunnelId}}
+X-API-Key: {{apiKey}}
 X-Namespace: {{namespace}}
 Content-Type: application/json
 
@@ -195,8 +193,10 @@ Content-Type: application/json
 
 ### 13 Delete tunnel port
 DELETE {{apiBase}}/tunnels/{{tunnelId}}/ports/{{port}}
+X-API-Key: {{apiKey}}
 X-Namespace: {{namespace}}
 
 ### 14 Delete tunnel
 DELETE {{apiBase}}/tunnels/{{tunnelId}}
+X-API-Key: {{apiKey}}
 X-Namespace: {{namespace}}

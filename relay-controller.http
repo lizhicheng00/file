@@ -157,17 +157,6 @@ Content-Type: application/json
   "allowAnonymous": true
 }
 
-### 11 Get Gateway tunnel port policy
-GET {{apiBase}}/clusters/{{clusterId}}/tunnels/{{tunnelId}}/ports/{{port}}
-
-> {%
-client.test("Gateway port policy is available", function () {
-    client.assert(response.status === 200, "Expected HTTP 200");
-    client.assert(response.body.protocol === "https", "Unexpected protocol");
-    client.assert(response.body.allowAnonymous === true, "Unexpected anonymous policy");
-});
-%}
-
 ### 12 Update tunnel
 PUT {{apiBase}}/tunnels/{{tunnelId}}
 X-Namespace: {{namespace}}

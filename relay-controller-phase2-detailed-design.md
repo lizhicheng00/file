@@ -32,11 +32,11 @@
 
 | 功能 | 说明 |
 | --- | --- |
-| 账户与套餐 | 一个 `namespace` 对应一个账户；首次使用时自动创建并绑定默认 `trial` 套餐 |
+| 账户与套餐 | `X-Namespace` 隔离资源，`X-Account-Namespace` 绑定账户；主、子 Namespace 可共享默认 `trial` 套餐和额度 |
 | 资源配额 | 创建 Tunnel、Port 时校验套餐限制；过期或已删除 Tunnel 不占用有效 Tunnel 配额 |
-| 流量结算 | Gateway 写入增量流量，Controller 生成分钟用量和月度累计用量 |
+| 流量结算 | Gateway 分方向写入增量流量，Controller 生成月度和 Tunnel 累计用量 |
 | 限制与余额 | 返回本月额度、剩余额度、重置时间和资源限制 |
-| 运行状态 | Tunnel 详情返回 Gateway 最近上报的连接数、速率和上报时间 |
+| 运行状态 | Tunnel 详情返回 Gateway 最近上报的连接数、速率、方向总流量和上报时间 |
 | Token 校验 | 签发前校验账户状态和月度额度；Token 有效期使用固定配置 |
 
 默认 `trial` 套餐：
@@ -56,7 +56,7 @@
 - Gateway 每 30 秒写入一次增量流量，并在 Host 会话结束时补充写入；
 - Controller 每分钟结算一次；
 - 余额按已结算流量计算，正常情况下允许约一分钟延迟；
-- 月度额度按 UTC 自然月生成新账期，不修改历史账期。
+- 月度额度在 `Asia/Shanghai` 每月 1 日 00:00 生成新账期，不修改历史账期。
 
 ### 2.2 约束与依赖
 
@@ -73,7 +73,7 @@
 - Controller 与 Gateway 共用 MySQL/MariaDB；
 - Cluster 需提前创建并绑定 Region；
 - Controller 只处理本 Region 所属 Cluster 的数据；
-- 时间统一使用 Unix 秒，账期和分钟窗口使用 UTC；
+- 时间统一使用 Unix 秒，月账期边界固定为 `Asia/Shanghai` 每月 1 日 00:00；
 - Gateway 从 `tunnel` 表取得 `account_id` 和 `cluster_id`，外部输入不能决定计量归属；
 - Gateway 不写入超过 7 天的历史计量记录；
 - Controller 不提供计量或状态上报 HTTP 接口；
@@ -82,9 +82,8 @@
 
 #### 安全边界
 
-- mTLS 确认服务身份，可信入口仍需校验并传递 `X-Namespace`；
+- mTLS 确认服务身份，可信入口需传递资源隔离字段 `X-Namespace` 和额度归属字段 `X-Account-Namespace`；
 - JWT 的 `aud` 为 `relay-gateway`，Gateway 校验签名、有效期、Audience、Tunnel、Cluster 和 Scope；
-- `forCookies=true` 仅标识交付方式，当前 Token 仍为可读取 Claims 的签名 JWT；
 - Cookie 写入和 JWE 加密不在本次交付范围。
 
 ## 3 实现设计
@@ -101,18 +100,16 @@ Relay Gateway
                   Relay Controller
                     周期结算
                          |
-              +----------+----------+
-              v                     v
-      billing_usage_1m       billing_period
-                                      |
-                              Limits / Token 校验
+                         v
+                  billing_period
+                         |
+                 Limits / Token 校验
 ```
 
-设计采用三层数据：
+设计采用两层计费数据：
 
 1. `tunnel_metering` 保存 Gateway 原始增量，作为结算输入和短期核查依据；
-2. `billing_usage_1m` 保存 Tunnel 分钟用量，支持问题定位和用量分析；
-3. `billing_period` 保存账户月度累计，作为余额和额度判断依据。
+2. `billing_period` 保存账户月度累计，作为余额和额度判断依据。
 
 运行状态独立保存在 `tunnel_runtime_status`，不参与计费。
 
@@ -120,11 +117,11 @@ Relay Gateway
 
 | 流程 | 触发 | 核心处理 | 结果 |
 | --- | --- | --- | --- |
-| 创建 Tunnel | 用户创建 Tunnel | 创建或读取账户，校验状态和有效 Tunnel 数量 | 成功创建并绑定账户，或返回配额错误 |
+| 创建 Tunnel | 用户创建 Tunnel | 按账户 Namespace 创建或读取账户，按资源 Namespace 保存 Tunnel | 成功隔离资源并共享账户额度，或返回配额错误 |
 | 创建 Port | 用户创建 Port | 校验 Tunnel 和当前 Port 数量 | 成功创建，或返回配额错误 |
 | 写入计量 | Gateway 周期上报或 Host 会话结束 | 写入本周期增量，重复请求保持幂等 | 形成待结算原始记录 |
-| 分钟结算 | Controller 定时任务 | 分别聚合账户月用量、Tunnel 分钟用量和 Tunnel 总用量 | 原始记录变为已结算 |
-| 查询余额 | 用户查询 Limits 或申请 Token | 读取当前 UTC 账期和套餐 | 返回余额，或在超额时拒绝 Token |
+| 周期结算 | Controller 定时任务 | 聚合账户月用量和 Tunnel 总用量 | 原始记录变为已结算 |
+| 查询余额 | 用户查询 Limits 或申请 Token | 读取当前北京时间账期和套餐 | 返回余额，或在超额时拒绝 Token |
 | 查询状态 | 用户查询 Tunnel 详情 | 读取 Gateway 最新状态 | 有状态则返回，无状态则仅返回 Tunnel |
 
 ### 3.3 关键业务算法
@@ -135,17 +132,16 @@ Relay Gateway
 唯一标识 = tunnelId + sessionId + reportedAt
 ```
 
-`usageBytes` 表示自上次成功上报后的新增流量。重试同一次上报时，唯一标识和流量值必须保持不变。
+`uploadBytes` 和 `downloadBytes` 表示自上次成功上报后的方向增量。重试同一次上报时，唯一标识和两个流量值必须保持不变；Controller 将两者相加计费。
 
 #### 时间归档
 
 ```text
-windowStart = reportedAt - reportedAt % 60
-periodStart = UTC 当月 1 日 00:00:00
-periodEnd   = UTC 下月 1 日 00:00:00
+periodStart = Asia/Shanghai 当月 1 日 00:00:00 对应的 Unix 秒
+periodEnd   = Asia/Shanghai 下月 1 日 00:00:00 对应的 Unix 秒
 ```
 
-计量按 `reportedAt` 归入分钟和月份，避免延迟到达的数据进入错误账期。
+计量按 `reportedAt` 归入月份，避免延迟到达的数据进入错误账期。
 
 #### 余额
 
@@ -232,10 +228,9 @@ Controller 不新增 `/metering` 或 `/tunnels/status`。HTTP 契约以 OpenAPI 
 | 表 | 用途 | 关键约束 | 生命周期 |
 | --- | --- | --- | --- |
 | `billing_plan` | 套餐和限制 | `plan_code` 唯一 | 长期保留 |
-| `billing_account` | `namespace` 与套餐绑定 | `namespace` 唯一 | 长期保留 |
+| `billing_account` | 账户 Namespace 与套餐绑定 | `namespace` 唯一 | 长期保留 |
 | `billing_period` | 月度额度和累计用量 | 账户与月份唯一 | 长期保留 |
 | `tunnel_metering` | 原始增量计量 | 按上报时间小时分区；Tunnel、会话与上报时间唯一 | 已结算数据保留 7 天 |
-| `billing_usage_1m` | Tunnel 分钟用量 | 账户、Tunnel 与分钟唯一 | 长期保留 |
 | `tunnel_runtime_status` | Tunnel 最新状态 | `tunnel_id` 唯一 | 覆盖更新，随 Tunnel 删除 |
 | `tunnel` | 增加账户归属 | 新增 `account_id` 及索引 | 延续一期生命周期 |
 
@@ -245,7 +240,7 @@ Controller 不新增 `/metering` 或 `/tunnels/status`。HTTP 契约以 OpenAPI 
 | --- | --- |
 | `account_id` / `cluster_id` / `tunnel_id` | 计量归属 |
 | `session_id` | Host 会话 |
-| `usage_bytes` | 本次新增流量 |
+| `upload_bytes` / `download_bytes` | 本次新增的上行和下行流量 |
 | `reported_at` / `created_at` | Gateway 上报时间和入库时间 |
 | `settled` | 是否已完成结算 |
 

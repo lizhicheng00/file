@@ -1,9 +1,7 @@
 # Run with a private "mgmt-local" HTTP Client environment.
-# Keep the proxy token and client certificate paths in an untracked
-# http-client.private.env.json. Example:
+# Keep the client certificate paths in an untracked http-client.private.env.json. Example:
 # {
 #   "mgmt-local": {
-#     "proxyToken": "<IDENTITY_PROXY_TOKEN>",
 #     "SSLConfiguration": {
 #       "clientCertificate": "<client.crt>",
 #       "clientCertificateKey": "<client.key>",
@@ -28,7 +26,6 @@ client.test("OpenAPI is available", function () {
 
 ### 01 Issue the default DevBridge API key
 POST {{apiBase}}/api-keys/default
-X-DevBridge-Proxy-Token: {{proxyToken}}
 X-Domain-Id: {{domainId}}
 X-User-Id: {{userId}}
 Content-Type: application/json
@@ -49,7 +46,6 @@ client.global.set("defaultApiKey", response.body.apiKey);
 
 ### 02 Issue the default DevBox API key
 POST {{apiBase}}/api-keys/default
-X-DevBridge-Proxy-Token: {{proxyToken}}
 X-Domain-Id: {{domainId}}
 X-User-Id: {{userId}}
 Content-Type: application/json
@@ -81,7 +77,8 @@ client.test("API key resolves the current user", function () {
 
 ### 04 List API keys
 GET {{apiBase}}/api-keys
-X-API-Key: {{defaultApiKey}}
+X-Domain-Id: {{domainId}}
+X-User-Id: {{userId}}
 
 > {%
 client.test("Default API key is listed", function () {
@@ -94,7 +91,8 @@ client.test("Default API key is listed", function () {
 
 ### 05 Create an additional DevBox API key
 POST {{apiBase}}/api-keys
-X-API-Key: {{defaultApiKey}}
+X-Domain-Id: {{domainId}}
+X-User-Id: {{userId}}
 Content-Type: application/json
 
 {
@@ -124,7 +122,8 @@ client.test("Additional API key resolves the current user", function () {
 
 ### 07 Delete the additional API key
 DELETE {{apiBase}}/api-keys/{{createdKeyId}}
-X-API-Key: {{defaultApiKey}}
+X-Domain-Id: {{domainId}}
+X-User-Id: {{userId}}
 
 > {%
 client.test("Additional API key is deleted", function () {
@@ -134,7 +133,6 @@ client.test("Additional API key is deleted", function () {
 
 ### 08 Rotate the default DevBridge API key
 POST {{apiBase}}/api-keys/default
-X-DevBridge-Proxy-Token: {{proxyToken}}
 X-Domain-Id: {{domainId}}
 X-User-Id: {{userId}}
 Content-Type: application/json

@@ -49,7 +49,7 @@ API Key 业务规则：
 | 类型 | `devbridge`、`devbox` |
 | 格式 | `devbridge_<payload>`、`devbox_<payload>` |
 | 名称 | 同一用户 Namespace 和类型内唯一，`default` 为系统保留名称 |
-| 最近使用 | 任一 API Key 认证成功后刷新，列表通过 `lastUsedAt` 展示；同一 Key 最多每分钟写入一次 |
+| 最近使用 | Key 校验成功后刷新，列表通过 `lastUsedAt` 展示；同一 Key 最多每分钟写入一次 |
 | 权限 | 当前所有 Key 均代表同一用户 Namespace，类型用于区分用途 |
 
 ### 2.2 约束与依赖
@@ -70,14 +70,14 @@ API Key 业务规则：
 - 同一 Domain 下的用户共享账户 Namespace，各自拥有独立用户 Namespace；
 - API Key 是用户凭证，持有者拥有对应用户 Namespace 的访问能力；
 - 各类型默认 Key 由登录流程签发，附加 Key 用于长期使用或设备隔离；
-- 附加 Key 原文丢失后，通过已有有效 Key 删除旧记录并重新创建；
+- 附加 Key 原文丢失后，用户重新登录并删除旧记录后再创建；
 - 已有用户割接时，身份映射在业务切流前完成导入。
 
 #### 安全边界
 
-- 服务间认证用于确认可信调用方；
-- 默认 Key 接口同时校验上层身份服务凭证和用户身份信息；
-- 其他接口根据 API Key 确定用户，不由请求参数选择 Namespace；
+- 所有接口使用 mTLS 确认可信调用方；
+- Key 管理接口根据上层传递的 Domain ID 和 User ID 确定用户，不接受 Namespace；
+- Key 校验接口根据 API Key 解析用户和账户归属；
 - 完整 API Key 只在必要的响应中返回，持久化数据只保留摘要和脱敏值；
 - 密钥和服务凭证由部署密钥系统统一管理。
 
@@ -142,7 +142,7 @@ API Key 对应一条用户凭证记录，再通过用户 Namespace 找到用户�
 
 #### Key 身份解析
 
-服务根据 API Key 摘要找到凭证记录，再关联用户和账户。摘要用于快速、唯一地定位记录，不能还原完整 Key。所有使用 API Key 的接口在认证成功后都会刷新最近使用时间；为减少持续调用产生的数据库写入，同一 Key 最多每分钟更新一次。`POST /api-keys/check` 用于上层服务主动校验 Key、解析身份并触发该刷新逻辑。
+服务根据 API Key 摘要找到凭证记录，再关联用户和账户。摘要用于快速、唯一地定位记录，不能还原完整 Key。`POST /api-keys/check` 校验成功后刷新最近使用时间；为减少持续调用产生的数据库写入，同一 Key 最多每分钟更新一次。Key 管理操作使用登录身份，不影响最近使用时间。
 
 #### 一致性
 
@@ -171,17 +171,16 @@ API Key 对应一条用户凭证记录，再通过用户 Namespace 找到用户�
 
 | 方法与路径 | 身份信息 | 用途 |
 | --- | --- | --- |
-| `POST /api-keys/default` | 上层服务凭证、Domain ID、User ID、类型 | 签发或轮换该类型默认 Key |
+| `POST /api-keys/default` | Domain ID、User ID、类型 | 签发或轮换该类型默认 Key |
 | `POST /api-keys/check` | API Key | 校验 Key、刷新 `lastUsedAt`，解析当前用户及 Namespace |
-| `GET /api-keys` | API Key | 查询当前用户的 Key 元数据 |
-| `POST /api-keys` | API Key | 创建附加类型 Key |
-| `DELETE /api-keys/{keyId}` | API Key | 删除当前用户的附加 Key |
+| `GET /api-keys` | Domain ID、User ID | 查询当前用户的 Key 元数据 |
+| `POST /api-keys` | Domain ID、User ID | 创建附加类型 Key |
+| `DELETE /api-keys/{keyId}` | Domain ID、User ID | 删除当前用户的附加 Key |
 
-`POST /api-keys/default` 使用以下请求头：
+默认 Key和管理接口使用以下请求头：
 
 | Header | 含义 |
 | --- | --- |
-| `X-DevBridge-Proxy-Token` | 上层身份服务凭证 |
 | `X-Domain-Id` | 已验证的云 Domain ID |
 | `X-User-Id` | 已验证的云 User ID |
 
@@ -233,6 +232,6 @@ API Key 对应一条用户凭证记录，再通过用户 Namespace 找到用户�
 | 身份与割接 | 同一 Domain 下使用多个用户，并预先导入一个已有用户的 Namespace | 用户 Namespace 相互隔离、账户 Namespace 共享，已有映射保持不变 |
 | 默认 Key 轮换 | 同一用户并发轮换一个类型，同时使用另一类型和附加 Key | 目标类型只保留最后签发的默认 Key，其他 Key 不受影响 |
 | 数量一致性 | 多实例并发创建同一类型的附加 Key | 名称保持唯一，该类型附加 Key 始终不超过 4 个 |
-| 用户隔离 | 用户 A 使用自己的 Key 查询或删除用户 B 的 Key | 无法访问或修改用户 B 的数据 |
+| 用户隔离 | 使用用户 A 的 Domain/User 身份查询或删除用户 B 的 Key | 无法访问或修改用户 B 的数据 |
 | 凭证安全 | 检查签发响应、列表和数据库记录 | 完整 Key 只在签发时返回，列表仅含脱敏值，数据库仅保存摘要 |
 | 最近使用 | 调用 `/api-keys/check` 并跨一分钟观察 `lastUsedAt` | 校验成功后刷新，一分钟内不重复写入，超过一分钟后时间推进 |

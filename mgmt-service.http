@@ -13,6 +13,7 @@
 # }
 
 @baseUrl = https://localhost:8443
+@apiBase = {{baseUrl}}/open-api-inner/v1/mgmt-service
 @domainId = domain-local-001
 @userId = user-local-001
 
@@ -26,7 +27,7 @@ client.test("OpenAPI is available", function () {
 %}
 
 ### 01 Provision or retrieve the default API key
-POST {{baseUrl}}/v1/api-key
+POST {{apiBase}}/api-key
 X-DevBridge-Proxy-Token: {{proxyToken}}
 X-Domain-Id: {{domainId}}
 X-User-Id: {{userId}}
@@ -41,7 +42,7 @@ client.global.set("defaultApiKey", response.body.apiKey);
 %}
 
 ### 02 Resolve the current identity
-GET {{baseUrl}}/v1/me
+GET {{apiBase}}/me
 X-API-Key: {{defaultApiKey}}
 
 > {%
@@ -53,7 +54,7 @@ client.test("API key resolves the current user", function () {
 %}
 
 ### 03 List API keys
-GET {{baseUrl}}/v1/api-keys
+GET {{apiBase}}/api-keys
 X-API-Key: {{defaultApiKey}}
 
 > {%
@@ -65,7 +66,7 @@ client.test("Default API key is listed", function () {
 %}
 
 ### 04 Create a DevBox API key
-POST {{baseUrl}}/v1/api-keys
+POST {{apiBase}}/api-keys
 X-API-Key: {{defaultApiKey}}
 Content-Type: application/json
 
@@ -85,7 +86,7 @@ client.global.set("createdApiKey", response.body.apiKey);
 %}
 
 ### 05 Authenticate with the additional API key
-GET {{baseUrl}}/v1/me
+GET {{apiBase}}/me
 X-API-Key: {{createdApiKey}}
 
 > {%
@@ -95,7 +96,7 @@ client.test("Additional API key resolves the current user", function () {
 %}
 
 ### 06 Delete the additional API key
-DELETE {{baseUrl}}/v1/api-keys/{{createdKeyId}}
+DELETE {{apiBase}}/api-keys/{{createdKeyId}}
 X-API-Key: {{defaultApiKey}}
 
 > {%

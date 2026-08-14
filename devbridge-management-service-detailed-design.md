@@ -166,18 +166,18 @@ API Key 对应一条用户凭证记录，再通过用户 Namespace 找到用户�
 接口前缀：
 
 ```text
-/v1
+/open-api-inner/v1/mgmt-service
 ```
 
 | 方法与路径 | 身份信息 | 用途 |
 | --- | --- | --- |
-| `POST /v1/api-key` | 上层服务凭证、Domain ID、User ID | 幂等创建或获取默认 Key |
-| `GET /v1/me` | API Key | 解析当前用户及 Namespace |
-| `GET /v1/api-keys` | API Key | 查询当前用户的 Key 元数据 |
-| `POST /v1/api-keys` | API Key | 创建附加场景 Key |
-| `DELETE /v1/api-keys/{keyId}` | API Key | 删除当前用户的附加 Key |
+| `POST /api-key` | 上层服务凭证、Domain ID、User ID | 幂等创建或获取默认 Key |
+| `GET /me` | API Key | 解析当前用户及 Namespace |
+| `GET /api-keys` | API Key | 查询当前用户的 Key 元数据 |
+| `POST /api-keys` | API Key | 创建附加场景 Key |
+| `DELETE /api-keys/{keyId}` | API Key | 删除当前用户的附加 Key |
 
-`POST /v1/api-key` 使用以下请求头：
+`POST /api-key` 使用以下请求头：
 
 | Header | 含义 |
 | --- | --- |

@@ -31,7 +31,7 @@ X-User-Id: {{userId}}
 Content-Type: application/json
 
 {
-  "type": "devbridge"
+  "scope": "devbridge"
 }
 
 > {%
@@ -39,7 +39,7 @@ client.test("Default API key is returned", function () {
     client.assert(response.status === 200, "Expected HTTP 200");
     client.assert(response.body.apiKey, "Missing apiKey");
     client.assert(response.body.namespace, "Missing namespace");
-    client.assert(response.body.type === "devbridge", "Unexpected key type");
+    client.assert(response.body.scope === "devbridge", "Unexpected key scope");
 });
 client.global.set("defaultApiKey", response.body.apiKey);
 %}
@@ -51,13 +51,13 @@ X-User-Id: {{userId}}
 Content-Type: application/json
 
 {
-  "type": "devbox"
+  "scope": "devbox"
 }
 
 > {%
 client.test("A separate default key is returned for DevBox", function () {
     client.assert(response.status === 200, "Expected HTTP 200");
-    client.assert(response.body.type === "devbox", "Unexpected key type");
+    client.assert(response.body.scope === "devbox", "Unexpected key scope");
     client.assert(response.body.apiKey.startsWith("devbox_"), "Unexpected API key prefix");
 });
 client.global.set("defaultDevBoxApiKey", response.body.apiKey);
@@ -84,7 +84,7 @@ X-User-Id: {{userId}}
 client.test("Default API key is listed", function () {
     client.assert(response.status === 200, "Expected HTTP 200");
     client.assert(Array.isArray(response.body), "Expected an array");
-    client.assert(response.body.filter(key => key.isDefault).length === 2, "Expected one default key per type");
+    client.assert(response.body.filter(key => key.isDefault).length === 2, "Expected one default key per scope");
     client.assert(response.body.some(key => key.lastUsedAt), "Missing last-used time");
 });
 %}
@@ -97,14 +97,15 @@ Content-Type: application/json
 
 {
   "name": "goland-{{$timestamp}}",
-  "type": "devbox"
+  "scope": "devbox"
 }
 
 > {%
 client.test("Additional API key is created", function () {
     client.assert(response.status === 201, "Expected HTTP 201");
     client.assert(response.body.id, "Missing key id");
-    client.assert(response.body.apiKey.startsWith("devbox_"), "Unexpected API key type");
+    client.assert(response.body.scope === "devbox", "Unexpected API key scope");
+    client.assert(response.body.apiKey.startsWith("devbox_"), "Unexpected API key prefix");
 });
 client.global.set("createdKeyId", response.body.id);
 client.global.set("createdApiKey", response.body.apiKey);
@@ -131,14 +132,24 @@ client.test("Additional API key is deleted", function () {
 });
 %}
 
-### 08 Rotate the default DevBridge API key
+### 08 Verify the deleted API key is invalid
+POST {{apiBase}}/api-keys/check
+X-API-Key: {{createdApiKey}}
+
+> {%
+client.test("Deleted API key is rejected", function () {
+    client.assert(response.status === 401, "Expected HTTP 401");
+});
+%}
+
+### 09 Rotate the default DevBridge API key
 POST {{apiBase}}/api-keys/default
 X-Domain-Id: {{domainId}}
 X-User-Id: {{userId}}
 Content-Type: application/json
 
 {
-  "type": "devbridge"
+  "scope": "devbridge"
 }
 
 > {%
@@ -150,7 +161,7 @@ client.global.set("rotatedOutApiKey", client.global.get("defaultApiKey"));
 client.global.set("defaultApiKey", response.body.apiKey);
 %}
 
-### 09 Verify the previous default API key is invalid
+### 10 Verify the previous default API key is invalid
 POST {{apiBase}}/api-keys/check
 X-API-Key: {{rotatedOutApiKey}}
 

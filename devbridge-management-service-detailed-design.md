@@ -33,8 +33,8 @@ Relay Controller 已按用户 Namespace 隔离 Tunnel，并按账户 Namespace �
 | 功能 | 说明 |
 | --- | --- |
 | 身份映射 | 一个云 Domain 对应一个账户 Namespace；一个用户对应一个用户 Namespace |
-| 默认 Key | 首次接入或 CLI 明确请求时按类型签发，作为快速业务凭证 |
-| 附加 Key | 按类型创建具名长期凭证，可独立删除 |
+| 默认 Key | 首次接入或 CLI 明确请求时按 Scope 签发，作为快速业务凭证 |
+| 附加 Key | 按 Scope 创建具名长期凭证，可独立删除 |
 | Key 校验 | 校验 API Key，返回用户及两个 Namespace |
 | Key 管理 | 按已验证的 Domain ID 和 User ID 查询、创建和删除 Key |
 | 数据割接 | 支持预先导入已有身份与 Namespace 映射 |
@@ -77,8 +77,8 @@ Relay Controller 已按用户 Namespace 隔离 Tunnel，并按账户 Namespace �
 
 | 流程 | 触发 | 核心处理 | 结果 |
 | --- | --- | --- | --- |
-| 首次接入 | 上层确认用户身份并请求默认 Key | 建立身份映射和两个 Namespace，签发指定类型默认 Key | 返回 Namespace 和完整 Key |
-| 默认 Key 轮换 | 已认证 CLI 明确请求 | 替换指定类型默认 Key | 新 Key 生效，同类型旧 Key 失效 |
+| 首次接入 | 上层确认用户身份并请求默认 Key | 建立身份映射和两个 Namespace，签发指定 Scope 默认 Key | 返回 Namespace 和完整 Key |
+| 默认 Key 轮换 | 已认证 CLI 明确请求 | 替换指定 Scope 默认 Key | 新 Key 生效，同 Scope 旧 Key 失效 |
 | Key 管理 | 上层传递 Domain ID 和 User ID | 解析用户 Namespace，查询、创建或删除 Key | 返回当前用户范围内的结果 |
 | Key 校验 | 业务服务提交 API Key | 按摘要解析身份并记录最近使用时间 | 返回两个 Namespace，或认证失败 |
 | 数据割接 | 业务切流前 | 导入云身份和已有 Namespace 的对应关系 | 用户继续使用原资源范围 |
@@ -88,8 +88,8 @@ Relay Controller 已按用户 Namespace 隔离 Tunnel，并按账户 Namespace �
 | 项目 | 设计 |
 | --- | --- |
 | 身份映射 | Domain ID 唯一映射账户 Namespace；同一 Domain 下的每个 User ID 映射独立用户 Namespace |
-| 默认 Key | `devbridge`、`devbox` 各一个，不可删除；显式签发只轮换目标类型，不影响另一类型和附加 Key |
-| 附加 Key | 每个类型最多四个；名称在用户 Namespace 和类型内唯一；删除后立即失效 |
+| 默认 Key | `devbridge`、`devbox` 各一个，不可删除；显式签发只轮换目标 Scope，不影响另一 Scope 和附加 Key |
+| 附加 Key | 每个 Scope 最多四个；名称在用户 Namespace 和 Scope 内唯一；删除后立即失效 |
 | Key 生成 | 24 字节安全随机值使用 Base64URL 编码，并添加 `devbridge_` 或 `devbox_` 前缀 |
 | Key 存储 | 使用 SHA-256 摘要定位凭证，完整值不可从数据库恢复 |
 | 最近使用 | `/api-keys/check` 成功后刷新 `lastUsedAt`，同一 Key 最多每分钟写入一次 |
@@ -107,7 +107,7 @@ Relay Controller 已按用户 Namespace 隔离 Tunnel，并按账户 Namespace �
 
 | 方法与路径 | 身份信息 | 用途 |
 | --- | --- | --- |
-| `POST /api-keys/default` | Domain ID、User ID、类型 | 签发或轮换默认 Key |
+| `POST /api-keys/default` | Domain ID、User ID | 签发或轮换默认 Key |
 | `POST /api-keys/check` | API Key | 校验 Key、刷新最近使用时间并解析身份 |
 | `GET /api-keys` | Domain ID、User ID | 查询 Key 元数据 |
 | `POST /api-keys` | Domain ID、User ID | 创建附加 Key |
@@ -119,7 +119,7 @@ Relay Controller 已按用户 Namespace 隔离 Tunnel，并按账户 Namespace �
 
 ```json
 {
-  "type": "devbridge"
+  "scope": "devbridge"
 }
 ```
 
@@ -128,11 +128,11 @@ Relay Controller 已按用户 Namespace 隔离 Tunnel，并按账户 Namespace �
 ```json
 {
   "name": "workstation",
-  "type": "devbox"
+  "scope": "devbox"
 }
 ```
 
-默认 Key 响应包含云身份、两个 Namespace、类型和完整 Key；校验响应返回云身份及两个 Namespace；列表只返回元数据和脱敏值；附加 Key 的完整值只在创建响应中返回。完整接口契约以 OpenAPI 为准。
+默认 Key 响应包含云身份、两个 Namespace、Scope 和完整 Key；校验响应返回云身份及两个 Namespace；列表只返回元数据和脱敏值；附加 Key 的完整值只在创建响应中返回。完整接口契约以 OpenAPI 为准。
 
 ### 3.6 数据表设计
 
@@ -140,17 +140,17 @@ Relay Controller 已按用户 Namespace 隔离 Tunnel，并按账户 Namespace �
 | --- | --- | --- |
 | `domain_account` | 云 Domain 与账户 Namespace 映射 | 一个 Domain 对应一个账户 Namespace |
 | `user_identity` | 云用户与用户 Namespace 映射 | 一个账户包含多个用户，每个用户拥有独立 Namespace |
-| `api_key` | Key 元数据和摘要 | 每个用户在每种类型下包含一个默认 Key 和最多四个附加 Key |
+| `api_key` | Key 元数据和摘要 | 每个用户在每个 Scope 下包含一个默认 Key 和最多四个附加 Key |
 
-`api_key` 保存 Key ID、用户 Namespace、名称、类型、脱敏值、摘要、创建时间和最近使用时间；用户身份停用后，其 Key 同步失效。
+`api_key` 保存 Key ID、用户 Namespace、名称、Scope、脱敏值、摘要、创建时间和最近使用时间；用户身份停用后，其 Key 同步失效。
 
 ## 4 验证建议
 
 | 业务范围 | 建议场景 | 预期结果 |
 | --- | --- | --- |
 | 身份与割接 | 同一 Domain 下使用多个用户，并导入一个已有用户的 Namespace | 用户 Namespace 相互隔离、账户 Namespace 共享，已有映射保持不变 |
-| 默认 Key 轮换 | 并发轮换一个类型，同时使用另一类型和附加 Key | 目标类型只保留最后签发的默认 Key，其他 Key 不受影响 |
-| 数量一致性 | 多实例并发创建同一类型的附加 Key | 名称保持唯一，该类型附加 Key 不超过四个 |
+| 默认 Key 轮换 | 并发轮换一个 Scope，同时使用另一 Scope 和附加 Key | 目标 Scope 只保留最后签发的默认 Key，其他 Key 不受影响 |
+| 数量一致性 | 多实例并发创建同一 Scope 的附加 Key | 名称保持唯一，该 Scope 附加 Key 不超过四个 |
 | 用户隔离 | 使用用户 A 的身份查询或删除用户 B 的 Key | 无法访问或修改用户 B 的数据 |
 | 凭证安全 | 检查签发响应、列表和数据库记录 | 完整 Key 只在签发时返回，列表仅含脱敏值，数据库仅保存摘要 |
 | 最近使用 | 调用 `/api-keys/check` 并跨一分钟观察 `lastUsedAt` | 校验成功后刷新，一分钟内不重复写入，超过一分钟后时间推进 |

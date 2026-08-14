@@ -25,7 +25,7 @@ Relay Controller 已按照用户 Namespace 隔离 Tunnel，并按照账户 Names
 
 ### 要求
 
-建立“云账号身份、Namespace、API Key”管理闭环，使用户登录后能够取得默认凭证，并持续管理不同场景的 API Key。
+建立“云账号身份、Namespace、API Key”管理闭环，使用户首次接入时取得默认业务凭证，后续在已确认登录身份的基础上管理不同场景的 API Key。
 
 ## 2 功能描述
 
@@ -34,17 +34,17 @@ Relay Controller 已按照用户 Namespace 隔离 Tunnel，并按照账户 Names
 | 功能 | 说明 |
 | --- | --- |
 | 身份映射 | 一个云 Domain 对应一个账户 Namespace；一个用户对应一个独立用户 Namespace |
-| 默认 API Key | 用户登录时按类型签发，同类型旧默认 Key 立即失效 |
+| 默认 API Key | CLI 或上层在确认登录身份后按需签发，作为立即可用的业务凭证，同类型旧默认 Key 立即失效 |
 | 类型 API Key | 用户可以为 DevBridge、DevBox 或不同设备创建独立 Key |
 | Key 校验 | 校验 API Key，并返回用户身份、用户 Namespace 和账户 Namespace |
-| Key 管理 | 查询 Key 元数据、创建附加 Key、删除附加 Key |
+| Key 管理 | 上层确认用户登录身份后，查询 Key 元数据、创建附加 Key、删除附加 Key |
 | 数据割接 | 已有 Namespace 映射可以预先导入，用户进入后继续沿用 |
 
 API Key 业务规则：
 
 | 项目 | 规则 |
 | --- | --- |
-| 默认 Key | `devbridge`、`devbox` 各 1 个；每次登录只轮换请求类型的默认 Key，不可删除 |
+| 默认 Key | `devbridge`、`devbox` 各 1 个；显式请求时轮换对应类型，不可删除 |
 | 附加 Key | 每个类型最多 4 个，可独立删除，完整值只在创建时返回 |
 | 类型 | `devbridge`、`devbox` |
 | 格式 | `devbridge_<payload>`、`devbox_<payload>` |
@@ -58,7 +58,7 @@ API Key 业务规则：
 
 | 组件 | 职责 |
 | --- | --- |
-| 上层身份服务 | 完成云账号登录，向 Management Service 传递可信的 Domain ID 和 User ID |
+| 上层身份服务 | 完成云账号登录并维护用户会话，确认身份后向 Management Service 传递可信的 Domain ID 和 User ID |
 | Management Service | 管理身份映射、Namespace 和 API Key 生命周期 |
 | Relay Service | 解析 API Key，并将用户 Namespace 和账户 Namespace 传递给 Relay Controller |
 | Relay Controller | 根据两个 Namespace 完成资源隔离和账户额度归属 |
@@ -69,13 +69,15 @@ API Key 业务规则：
 - Namespace 由云账号身份唯一确定，调用方只传递身份信息；
 - 同一 Domain 下的用户共享账户 Namespace，各自拥有独立用户 Namespace；
 - API Key 是用户凭证，持有者拥有对应用户 Namespace 的访问能力；
-- 各类型默认 Key 由登录流程签发，附加 Key 用于长期使用或设备隔离；
+- 用户首次接入时先签发默认 Key，并建立身份和 Namespace 映射；
+- 默认 Key 用于 CLI 等场景快速取得业务凭证，附加 Key 用于长期使用或设备隔离；
+- Key 管理依赖上层已确认的用户登录身份，不使用 API Key 作为管理凭证；
 - 附加 Key 原文丢失后，用户重新登录并删除旧记录后再创建；
 - 已有用户割接时，身份映射在业务切流前完成导入。
 
 #### 安全边界
 
-- 所有接口使用 mTLS 确认可信调用方；
+- 所有接口使用 mTLS 确认可信调用方，用户登录态由上层身份服务确认；
 - Key 管理接口根据上层传递的 Domain ID 和 User ID 确定用户，不接受 Namespace；
 - Key 校验接口根据 API Key 解析用户和账户归属；
 - 完整 API Key 只在必要的响应中返回，持久化数据只保留摘要和脱敏值；
@@ -89,7 +91,7 @@ API Key 业务规则：
 用户登录
    |
    v
-上层身份服务 -- Domain ID / User ID --> Management Service
+上层身份服务 -- 已验证的 Domain ID / User ID --> Management Service
                                              |
                             身份映射 + Namespace + API Key
                                              |
@@ -112,18 +114,19 @@ API Key 对应一条用户凭证记录，再通过用户 Namespace 找到用户�
 
 | 流程 | 触发 | 核心处理 | 结果 |
 | --- | --- | --- | --- |
-| 签发默认 Key | 用户完成登录并选择类型 | 创建或读取身份和 Namespace，替换该类型默认 Key | 返回新 Key，同类型旧默认 Key 失效 |
-| 校验 Key | 上层服务收到 API Key | 校验 Key、刷新最近使用时间，并找到用户及账户归属 | 返回两个 Namespace，或认证失败 |
-| 查询 Key | 用户进入 Key 管理 | 查询当前用户的 Key 元数据 | 返回默认 Key 和附加 Key 列表 |
-| 创建附加 Key | 用户选择名称和类型 | 校验名称、类型及该类型数量限制 | 返回一次完整 Key |
-| 删除附加 Key | 用户选择已有 Key | 校验 Key 归属和类型 | 删除后立即失效 |
+| 签发默认 Key | 用户首次接入，或已认证的 CLI 明确请求业务凭证 | 创建或读取身份和 Namespace，替换该类型默认 Key | 返回新 Key，同类型旧默认 Key 失效 |
+| 校验 Key | 业务服务收到 API Key | 校验 Key、刷新最近使用时间，并找到用户及账户归属 | 返回两个 Namespace，或认证失败 |
+| 查询 Key | 上层确认用户登录身份 | 按 Domain ID 和 User ID 查询 Key 元数据 | 返回默认 Key 和附加 Key 列表 |
+| 创建附加 Key | 上层确认用户登录身份并提交名称和类型 | 校验名称、类型及该类型数量限制 | 返回一次完整 Key |
+| 删除附加 Key | 上层确认用户登录身份并提交 Key ID | 校验 Key 归属和类型 | 删除后立即失效 |
 | 现有用户割接 | 业务切流前 | 导入身份和已有 Namespace 的对应关系 | 用户继续使用原资源隔离范围 |
 
 推荐使用方式：
 
-- DevBridge 和 DevBox 分别签发默认 Key，一个类型的登录不影响另一类型；
+- 用户首次接入时签发所需类型的默认 Key，完成身份映射和业务凭证准备；
+- DevBridge 和 DevBox 分别签发默认 Key，一个类型的签发不影响另一类型；
 - 不同设备需要独立撤销能力时，分别创建附加 Key；
-- 默认 Key 丢失后重新登录并轮换；
+- CLI 需要立即调用业务或默认 Key 丢失时，显式请求并轮换对应类型；
 - 附加 Key 丢失后删除旧 Key 并重新创建。
 
 ### 3.3 关键业务规则
@@ -134,7 +137,7 @@ API Key 对应一条用户凭证记录，再通过用户 Namespace 找到用户�
 
 #### 默认 Key 轮换
 
-每次登录随机生成新的默认 Key，只替换请求类型的默认 Key 记录。同一类型旧 Key 立即失效，另一类型默认 Key 和所有附加 Key 不受影响。轮换不增加 Key 数量，也不改变 Namespace。
+默认 Key 是系统管理的快速业务凭证。用户首次接入或已认证的 CLI 明确请求时随机生成新值，只替换请求类型的默认 Key 记录。同一类型旧 Key 立即失效，另一类型默认 Key 和所有附加 Key 不受影响。首次签发同时建立身份和 Namespace 映射；后续普通页面登录和 Key 管理不触发轮换。轮换不增加 Key 数量，也不改变 Namespace。
 
 #### 附加 Key 生命周期
 
@@ -177,7 +180,7 @@ API Key 对应一条用户凭证记录，再通过用户 Namespace 找到用户�
 | `POST /api-keys` | Domain ID、User ID | 创建附加类型 Key |
 | `DELETE /api-keys/{keyId}` | Domain ID、User ID | 删除当前用户的附加 Key |
 
-默认 Key和管理接口使用以下请求头：
+默认 Key 和管理接口使用以下请求头：
 
 | Header | 含义 |
 | --- | --- |

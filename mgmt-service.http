@@ -26,22 +26,48 @@ client.test("OpenAPI is available", function () {
 });
 %}
 
-### 01 Provision or retrieve the default API key
+### 01 Provision or retrieve the default DevBridge API key
 POST {{apiBase}}/api-key
 X-DevBridge-Proxy-Token: {{proxyToken}}
 X-Domain-Id: {{domainId}}
 X-User-Id: {{userId}}
+Content-Type: application/json
+
+{
+  "type": "devbridge"
+}
 
 > {%
 client.test("Default API key is returned", function () {
     client.assert(response.status === 200, "Expected HTTP 200");
     client.assert(response.body.apiKey, "Missing apiKey");
     client.assert(response.body.namespace, "Missing namespace");
+    client.assert(response.body.type === "devbridge", "Unexpected key type");
 });
 client.global.set("defaultApiKey", response.body.apiKey);
 %}
 
-### 02 Resolve the current identity
+### 02 Provision or retrieve the default DevBox API key
+POST {{apiBase}}/api-key
+X-DevBridge-Proxy-Token: {{proxyToken}}
+X-Domain-Id: {{domainId}}
+X-User-Id: {{userId}}
+Content-Type: application/json
+
+{
+  "type": "devbox"
+}
+
+> {%
+client.test("A separate default key is returned for DevBox", function () {
+    client.assert(response.status === 200, "Expected HTTP 200");
+    client.assert(response.body.type === "devbox", "Unexpected key type");
+    client.assert(response.body.apiKey.startsWith("devbox_"), "Unexpected API key prefix");
+});
+client.global.set("defaultDevBoxApiKey", response.body.apiKey);
+%}
+
+### 03 Validate the API key and resolve its identity
 GET {{apiBase}}/me
 X-API-Key: {{defaultApiKey}}
 
@@ -53,7 +79,7 @@ client.test("API key resolves the current user", function () {
 });
 %}
 
-### 03 List API keys
+### 04 List API keys
 GET {{apiBase}}/api-keys
 X-API-Key: {{defaultApiKey}}
 
@@ -61,31 +87,32 @@ X-API-Key: {{defaultApiKey}}
 client.test("Default API key is listed", function () {
     client.assert(response.status === 200, "Expected HTTP 200");
     client.assert(Array.isArray(response.body), "Expected an array");
-    client.assert(response.body.some(key => key.isDefault), "Missing default API key");
+    client.assert(response.body.filter(key => key.isDefault).length === 2, "Expected one default key per type");
+    client.assert(response.body.some(key => key.lastUsedAt), "Missing last-used time");
 });
 %}
 
-### 04 Create a DevBox API key
+### 05 Create an additional DevBox API key
 POST {{apiBase}}/api-keys
 X-API-Key: {{defaultApiKey}}
 Content-Type: application/json
 
 {
   "name": "goland-{{$timestamp}}",
-  "scenario": "devbox"
+  "type": "devbox"
 }
 
 > {%
 client.test("Additional API key is created", function () {
     client.assert(response.status === 201, "Expected HTTP 201");
     client.assert(response.body.id, "Missing key id");
-    client.assert(response.body.apiKey.startsWith("devbox_"), "Unexpected API key scenario");
+    client.assert(response.body.apiKey.startsWith("devbox_"), "Unexpected API key type");
 });
 client.global.set("createdKeyId", response.body.id);
 client.global.set("createdApiKey", response.body.apiKey);
 %}
 
-### 05 Authenticate with the additional API key
+### 06 Authenticate with the additional API key
 GET {{apiBase}}/me
 X-API-Key: {{createdApiKey}}
 
@@ -95,7 +122,7 @@ client.test("Additional API key resolves the current user", function () {
 });
 %}
 
-### 06 Delete the additional API key
+### 07 Delete the additional API key
 DELETE {{apiBase}}/api-keys/{{createdKeyId}}
 X-API-Key: {{defaultApiKey}}
 

@@ -26,8 +26,8 @@ client.test("OpenAPI is available", function () {
 });
 %}
 
-### 01 Provision or retrieve the default DevBridge API key
-POST {{apiBase}}/api-key
+### 01 Issue the default DevBridge API key
+POST {{apiBase}}/api-keys/default
 X-DevBridge-Proxy-Token: {{proxyToken}}
 X-Domain-Id: {{domainId}}
 X-User-Id: {{userId}}
@@ -47,8 +47,8 @@ client.test("Default API key is returned", function () {
 client.global.set("defaultApiKey", response.body.apiKey);
 %}
 
-### 02 Provision or retrieve the default DevBox API key
-POST {{apiBase}}/api-key
+### 02 Issue the default DevBox API key
+POST {{apiBase}}/api-keys/default
 X-DevBridge-Proxy-Token: {{proxyToken}}
 X-Domain-Id: {{domainId}}
 X-User-Id: {{userId}}
@@ -68,7 +68,7 @@ client.global.set("defaultDevBoxApiKey", response.body.apiKey);
 %}
 
 ### 03 Validate the API key and resolve its identity
-GET {{apiBase}}/me
+POST {{apiBase}}/api-keys/check
 X-API-Key: {{defaultApiKey}}
 
 > {%
@@ -113,7 +113,7 @@ client.global.set("createdApiKey", response.body.apiKey);
 %}
 
 ### 06 Authenticate with the additional API key
-GET {{apiBase}}/me
+POST {{apiBase}}/api-keys/check
 X-API-Key: {{createdApiKey}}
 
 > {%
@@ -129,5 +129,35 @@ X-API-Key: {{defaultApiKey}}
 > {%
 client.test("Additional API key is deleted", function () {
     client.assert(response.status === 204, "Expected HTTP 204");
+});
+%}
+
+### 08 Rotate the default DevBridge API key
+POST {{apiBase}}/api-keys/default
+X-DevBridge-Proxy-Token: {{proxyToken}}
+X-Domain-Id: {{domainId}}
+X-User-Id: {{userId}}
+Content-Type: application/json
+
+{
+  "type": "devbridge"
+}
+
+> {%
+client.test("Default API key is rotated", function () {
+    client.assert(response.status === 200, "Expected HTTP 200");
+    client.assert(response.body.apiKey !== client.global.get("defaultApiKey"), "API key was not rotated");
+});
+client.global.set("rotatedOutApiKey", client.global.get("defaultApiKey"));
+client.global.set("defaultApiKey", response.body.apiKey);
+%}
+
+### 09 Verify the previous default API key is invalid
+POST {{apiBase}}/api-keys/check
+X-API-Key: {{rotatedOutApiKey}}
+
+> {%
+client.test("Previous default API key is rejected", function () {
+    client.assert(response.status === 401, "Expected HTTP 401");
 });
 %}

@@ -49,7 +49,7 @@ API Key 业务规则：
 | 类型 | `devbridge`、`devbox` |
 | 格式 | `devbridge_<payload>`、`devbox_<payload>` |
 | 名称 | 同一用户 Namespace 和类型内唯一，`default` 为系统保留名称 |
-| 最近使用 | 成功校验 Key 后更新，列表通过 `lastUsedAt` 展示 |
+| 最近使用 | 任一 API Key 认证成功后刷新，列表通过 `lastUsedAt` 展示；同一 Key 最多每分钟写入一次 |
 | 权限 | 当前所有 Key 均代表同一用户 Namespace，类型用于区分用途 |
 
 ### 2.2 约束与依赖
@@ -113,7 +113,7 @@ API Key 对应一条用户凭证记录，再通过用户 Namespace 找到用户�
 | 流程 | 触发 | 核心处理 | 结果 |
 | --- | --- | --- | --- |
 | 签发默认 Key | 用户完成登录并选择类型 | 创建或读取身份和 Namespace，替换该类型默认 Key | 返回新 Key，同类型旧默认 Key 失效 |
-| 校验 Key | 上层服务收到 API Key | 校验 Key，并找到用户及账户归属 | 返回两个 Namespace，或认证失败 |
+| 校验 Key | 上层服务收到 API Key | 校验 Key、刷新最近使用时间，并找到用户及账户归属 | 返回两个 Namespace，或认证失败 |
 | 查询 Key | 用户进入 Key 管理 | 查询当前用户的 Key 元数据 | 返回默认 Key 和附加 Key 列表 |
 | 创建附加 Key | 用户选择名称和类型 | 校验名称、类型及该类型数量限制 | 返回一次完整 Key |
 | 删除附加 Key | 用户选择已有 Key | 校验 Key 归属和类型 | 删除后立即失效 |
@@ -142,7 +142,7 @@ API Key 对应一条用户凭证记录，再通过用户 Namespace 找到用户�
 
 #### Key 身份解析
 
-服务根据 API Key 摘要找到凭证记录，再关联用户和账户。摘要用于快速、唯一地定位记录，不能还原完整 Key。成功校验同时更新最近使用时间；`POST /api-keys/check` 是唯一的 Key 校验和身份解析接口。
+服务根据 API Key 摘要找到凭证记录，再关联用户和账户。摘要用于快速、唯一地定位记录，不能还原完整 Key。所有使用 API Key 的接口在认证成功后都会刷新最近使用时间；为减少持续调用产生的数据库写入，同一 Key 最多每分钟更新一次。`POST /api-keys/check` 用于上层服务主动校验 Key、解析身份并触发该刷新逻辑。
 
 #### 一致性
 
@@ -172,7 +172,7 @@ API Key 对应一条用户凭证记录，再通过用户 Namespace 找到用户�
 | 方法与路径 | 身份信息 | 用途 |
 | --- | --- | --- |
 | `POST /api-keys/default` | 上层服务凭证、Domain ID、User ID、类型 | 签发或轮换该类型默认 Key |
-| `POST /api-keys/check` | API Key | 校验 Key，解析当前用户及 Namespace |
+| `POST /api-keys/check` | API Key | 校验 Key、刷新 `lastUsedAt`，解析当前用户及 Namespace |
 | `GET /api-keys` | API Key | 查询当前用户的 Key 元数据 |
 | `POST /api-keys` | API Key | 创建附加类型 Key |
 | `DELETE /api-keys/{keyId}` | API Key | 删除当前用户的附加 Key |
@@ -238,7 +238,7 @@ API Key 对应一条用户凭证记录，再通过用户 Namespace 找到用户�
 | 默认 Key 保护 | 尝试删除默认 Key | 返回业务冲突，默认 Key 继续有效 |
 | 类型 Key | 分别创建 `devbridge` 和 `devbox` Key | Key 前缀、类型和所属用户正确 |
 | Key 展示 | 创建后再次查询 Key 列表 | 列表只返回元数据和脱敏值，不返回完整 Key |
-| 最近使用 | 使用一个 Key 调用 `/api-keys/check` 后查询列表 | 对应 Key 的 `lastUsedAt` 已记录 |
+| 最近使用 | 使用一个 Key 调用 `/api-keys/check` 后查询列表 | 首次使用后记录 `lastUsedAt`；一分钟内重复调用不重复写入，超过一分钟再次使用后时间推进 |
 | Key 数量 | 每个类型分别连续创建 4 个附加 Key 后再次创建 | 两类互不占用配额，各自第 5 个附加 Key 返回数量冲突 |
 | Key 名称 | 在同一类型使用重复名称，并在另一类型复用名称 | 同类型返回冲突，不同类型允许创建 |
 | Key 删除 | 删除附加 Key 后再次使用该 Key | 删除成功，原 Key 认证失败，空闲位置可以重新使用 |

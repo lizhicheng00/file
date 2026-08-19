@@ -1,0 +1,101 @@
+M3 DevBridge
+
+                      首次获取 API Key
+  ┌──────────────┐
+  │ DevBridge CLI│──打开浏览器──┐
+  │ / Desktop    │              ▼
+  └──────┬───────┘      ┌──────────────────┐
+         │              │ Desktop SSO      │
+         │              │ + Container      │
+         │              └────────┬─────────┘
+         │                       │ 华为云登录
+         │                       ▼
+         │              ┌──────────────────┐
+         │              │ Huawei Cloud IAM │
+         │              └────────┬─────────┘
+         │                       │ domainId/userId
+         │                       ▼
+         │              ┌──────────────────┐
+         │              │ M3 API Gateway   │
+         │              └────────┬─────────┘
+         │                       ▼
+         │              ┌──────────────────┐
+         │              │ mgmt-service     │──→ mgmt DB
+         │              │ 签发 devbridge_  │
+         │              └────────┬─────────┘
+         │◀──────────── API Key ──┘
+         │
+         │       后续业务请求：不再登录
+         │ X-API-Key
+         ▼
+  ┌──────────────────┐
+  │ M3 API Gateway   │  公网 HTTPS、限流、转发
+  └────────┬─────────┘
+           │ 私网 HTTP
+           ▼
+  ┌──────────────────┐
+  │ relay-controller │──→ Relay DB
+  └────────┬─────────┘
+           │ API Key Check
+           ▼
+  ┌──────────────────┐
+  │ 内部网关/入口     │──→ mgmt-service ──→ mgmt DB
+  └──────────────────┘
+
+  Host / Connect ──JWT──→ relay-gateway
+                             │
+                             ├─读取 Relay DB
+                             └─写入状态和计量
+
+  DevBridge 的华为云登录只负责首次签发或管理 API Key。配置好 API Key 后，CLI 日常调用不需要再登录。
+
+  本地开发也不必每次进入公司环境：准备一个测试 API Key 后，可以直接调 Relay。只有测试“登录换 Key”链路时才依赖 Desktop SSO 和华为云登录。
+
+  M4 DevBox
+  DevBox 不能理解为只依赖 Relay Controller。Relay 只负责隧道和端口暴露；Sandbox 生命周期仍需要 DevBox Service、调度和虚拟化组件。
+
+                  API Key 获取方式
+  ┌────────────────────────────────────┐
+  │ 方式一：用户手工配置 devbox_ Key   │
+  │ 方式二：CLI 打开浏览器静默获取默认Key│
+  │ 方式三：管理页面创建附加 Key        │
+  └──────────────────┬─────────────────┘
+                     ▼
+            ┌──────────────────┐
+            │ M4 登录/网关入口 │──→ Huawei Cloud IAM
+            └────────┬─────────┘
+                     ▼
+            ┌──────────────────┐
+            │ M4 mgmt-service  │──→ M4 mgmt DB
+            │ 签发 devbox_ Key │
+            └──────────────────┘
+
+  CLI / SDK / Web
+         │ X-API-Key
+         ▼
+  ┌──────────────────┐
+  │ M4 API Gateway   │  公网 HTTPS、限流、转发
+  └────────┬─────────┘
+           ▼
+  ┌──────────────────┐
+  │ devbox-service   │──Check devbox Key──→ mgmt-service
+  └────────┬─────────┘
+           ▼
+  ┌──────────────────┐
+  │ Orchestrator     │──→ Git / Template / Image / Storage
+  └────────┬─────────┘
+           ▼
+  ┌──────────────────┐
+  │ Nomad Server     │
+  └────────┬─────────┘
+           ▼
+  ┌──────────────────┐
+  │ Nomad Client     │
+  └────────┬─────────┘
+           ▼
+  ┌──────────────────┐
+  │ Firecracker VM   │──→ envd / PTY / Filesystem / Network
+  └──────────────────┘
+
+  可选端口暴露：
+  devbox-service ──内部调用──→ relay-controller ──→ relay-gateway

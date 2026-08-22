@@ -1,14 +1,11 @@
 {
-  "startupProbeEnabled": false,
-  "startupProbe": {
-    "exec": {
-      "command": [
-        "/bin/sh",
-        "-c",
-        "/opt/devc/bin/health-check.sh"
-      ]
-    },
-    "periodSeconds": 3,
-    "failureThreshold": 200
-  }
+  "exec": {
+    "command": [
+      "/bin/sh",
+      "-c",
+      "/opt/devc/bin/health-check.sh"
+    ]
+  },
+  "periodSeconds": 3,
+  "failureThreshold": 200
 }

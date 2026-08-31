@@ -1,0 +1,27 @@
+long long maxScore(vector<int>& nums) {
+    int n = nums.size() / 2;
+
+    priority_queue<
+        long long,
+        vector<long long>,
+        greater<long long>
+    > pq;
+
+    long long ans = 0;
+
+    for (int k = 1; k <= n; ++k) {
+        int l = n - k;
+        int r = n + k - 1;
+
+        pq.push(nums[l]);
+        ans += nums[l];
+
+        pq.push(nums[r]);
+        ans += nums[r];
+
+        ans -= pq.top();
+        pq.pop();
+    }
+
+    return ans;
+}

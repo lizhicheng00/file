@@ -1,0 +1,8 @@
+F4::{
+    SendEvent "{sc012 down}"
+    Sleep 200
+    SendEvent "{sc012 up}"
+
+    Sleep 6500
+    ProcessClose("eldenring.exe")
+}

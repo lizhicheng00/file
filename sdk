@@ -1,0 +1,89 @@
+Python 使用 `snake_case`，JS/TS 使用 `camelCase`。Python 另有对应的 `AsyncDevBox`、`AsyncSandbox`，参数基本一致；JS 方法均返回 `Promise`。
+
+**Manager 控制面**
+
+| 方法 | 主要参数 | 作用 |
+|---|---|---|
+| `Sandbox.create` | `template="default"`、`timeout=300`、`envs`、`metadata`、`secure=true`、`clientId/client_id`、`buildId/build_id`、`volumeMounts/volume_mounts`、`idempotencyKey/idempotency_key` | 创建并连接沙箱 |
+| `Sandbox.connect` | `sandboxId/sandbox_id`、`timeout=300` | 连接已有沙箱并获取数据面凭证 |
+| `client.sandboxes.create` | 同上，不包含连接配置 | 使用可复用客户端创建沙箱 |
+| `client.sandboxes.connect` | `sandboxId`、`timeout=300` | 连接已有沙箱 |
+| `client.sandboxes.get` | `sandboxId` | 获取沙箱详情 |
+| `client.sandboxes.list` | `metadata`、`states`、`limit`、`nextToken/next_token` | 分页查询沙箱 |
+| `client.sandboxes.metrics` | `sandboxIds/sandbox_ids`，最多 100 个 | 批量获取指标 |
+| `sandbox.getInfo/get_info` | 无 | 刷新并返回沙箱详情 |
+| `sandbox.isRunning/is_running` | 无 | 判断沙箱是否运行 |
+| `sandbox.setTimeout/set_timeout` | `timeout`，秒 | 设置剩余生命周期 |
+| `sandbox.refresh` | `duration=300`，秒 | 延长沙箱生命周期 |
+| `sandbox.kill` | 无 | 删除沙箱，返回是否原本存在 |
+| `sandbox.getLogs/get_logs` | `cursor`、`limit`、`direction`、`level`、`search` | 查询日志 |
+| `sandbox.getMetrics/get_metrics` | `start`、`end`，Unix 时间或日期对象 | 查询资源指标 |
+| `sandbox.close` | 无 | 只关闭本地连接，不删除沙箱 |
+
+公共连接配置：
+
+- `apiKey/api_key`
+- `apiUrl/api_url`
+- `gatewayUrl/gateway_url`
+- `requestTimeoutMs`（JS，毫秒）
+- `request_timeout`（Python，秒）
+- `headers`
+
+当前不支持 `network` 创建参数，也不提供 `updateNetwork/update_network`。
+
+**Gateway 数据面**
+
+命令与进程：
+
+| 方法 | 主要参数 |
+|---|---|
+| `commands.run` | `command`、`background`、`envs`、`cwd`、`user`、`stdin`、`timeout`、输出回调、`check` |
+| `commands.connect` | `pid`、`timeout` |
+| `commands.list` | 无 |
+| `commands.sendStdin/send_stdin` | `pid`、`data` |
+| `commands.closeStdin/close_stdin` | `pid` |
+| `commands.sendSignal/send_signal` | `pid`、`SIGTERM` 或 `SIGKILL` |
+
+后台任务返回 `CommandHandle`：
+
+- `wait(onStdout/on_stdout, onStderr/on_stderr, check)`
+- `sendStdin/send_stdin(data)`
+- `closeStdin/close_stdin()`
+- `sendSignal/send_signal(signal)`
+- `kill()`
+- `disconnect()`
+
+文件系统：
+
+- `files.readBytes/read_bytes(path)`
+- `files.read(path, encoding)`
+- `files.write(path, data, encoding)`
+- `files.writeBatch/write_batch(files, encoding)`
+- `files.list(path, depth=1)`
+- `files.stat(path)`
+- `files.exists(path)`
+- `files.makeDir/make_dir(path)`
+- `files.move(source, destination)`
+- `files.remove(path)`
+- `files.upload(localPath, remotePath)`
+- `files.download(remotePath, localPath)`
+- `files.watch(path, recursive=false, includeEntry=true)`
+
+PTY 交互终端：
+
+- `pty.start(command="/bin/bash", size, envs, cwd, user)`
+- `pty.connect(pid, timeout)`
+- `pty.resize(pid, size={rows, cols})`
+
+Git：
+
+- `git.clone(url, path, branch, depth, credentials, timeout)`
+- `git.status(repository)`
+- `git.checkout(repository, reference, create=false)`
+- `git.add(repository, paths=".")`
+- `git.commit(repository, message)`
+- `git.pull(repository, remote="origin", branch, credentials, timeout)`
+- `git.push(repository, remote="origin", branch, credentials, timeout)`
+- `git.setConfig/set_config(repository, key, value)`
+
+Python 命令和 Git 的 `timeout` 单位为秒；JS 对应参数名为 `timeoutMs`，单位为毫秒。

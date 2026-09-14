@@ -1,0 +1,330 @@
+/home/huawei/IdeaProjects/devspace-devbox/packages/python-sdk/.venv/bin/python /home/huawei/IdeaProjects/devspace-devbox/packages/python-sdk/examples/run_local.py validate_full 
+Local DNS: *-49983.cn-north-4-bridge.myhuaweicloud.com -> 110.41.63.59
+DevBox full validation | template=default
+gateway=https://{tunnel_id}-{port}.cn-north-4-bridge.myhuaweicloud.com
+
+=== Create sandbox ===
+Start template='default', timeout=300s, with an isolated runtime
+
+TEST 01 | sandbox.create
+  DO sandboxes.create(envs={'DEVBOX_SDK_ENV': 'created-731'})
+    DONE | 1.163s
+PASS sandbox.create | 1.163s
+sandbox_id=7a9e650e-8ceb-47c8-a8e3-73d1796b5b61
+
+=== Sandbox management ===
+Inspect, reconnect, extend lifetime and read monitoring data
+
+TEST 02 | manager.get
+  DO sandbox.get_info()
+    DONE | 0.022s
+    state=running | template=default | end_at=2026-09-14 08:12:21+00:00
+PASS manager.get | 0.022s
+
+TEST 03 | manager.is_running
+  DO sandbox.is_running()
+    DONE | 0.021s
+    result=True
+PASS manager.is_running | 0.022s
+
+TEST 04 | manager.list
+  DO sandboxes.list(limit=100)
+    DONE | 0.022s
+    sandboxes=1 | current sandbox must be present
+PASS manager.list | 0.022s
+
+TEST 05 | manager.connect
+  DO sandboxes.connect('7a9e650e-8ceb-47c8-a8e3-73d1796b5b61') | open a new SDK handle
+    DONE | 0.020s
+  DO connected.close() | keep the remote sandbox running
+    DONE | 0.000s
+PASS manager.connect | 0.020s
+
+TEST 06 | manager.set_timeout
+  DO sandbox.set_timeout(300) | remaining lifetime: 300s
+    DONE | 0.025s
+PASS manager.set_timeout | 0.025s
+
+TEST 07 | manager.refresh
+  DO sandbox.refresh(300) | reset deadline to now + 300s
+    DONE | 0.022s
+  DO sandbox.get_info() | verify the actual deadline
+    DONE | 0.021s
+    state=running | template=default | end_at=2026-09-14 08:12:22+00:00
+PASS manager.refresh | 0.044s
+
+TEST 08 | manager.metrics
+  DO sandbox.get_metrics()
+    DONE | 0.020s
+    items=1
+    sample_time=1789373242128 | cpu_used=0.0% | memory_used=0 bytes | disk_used=0 bytes
+PASS manager.metrics | 0.020s
+
+TEST 09 | manager.logs
+  DO sandbox.get_logs(limit=20)
+    DONE | 0.020s
+    items=0
+PASS manager.logs | 0.020s
+
+TEST 10 | runtime.ready
+runtime_url=https://45be2fqb-49983.cn-north-4-bridge.myhuaweicloud.com
+  DO commands.run('printf runtime-ready') | verify remote execution
+    DONE | 0.195s
+    pid=87 | exit_code=0
+    stdout:
+      runtime-ready
+    stderr:
+      (empty)
+PASS runtime.ready | 0.195s
+
+TEST 11 | runtime.environment
+  DO commands.run('printf "%s|%s" "$DEVBOX_ID" "$DEVBOX_SDK_ENV"') | verify sandbox identity and create-time environment
+    DONE | 0.104s
+    pid=139 | exit_code=0
+    stdout:
+      7a9e650e-8ceb-47c8-a8e3-73d1796b5b61|created-731
+    stderr:
+      (empty)
+PASS runtime.environment | 0.104s
+
+=== Commands ===
+Capture stdout/stderr, run background jobs and send standard input
+
+TEST 12 | commands.foreground
+  DO commands.run('printf "$DEVBOX_TEST"; printf error-ok >&2') | cwd=/tmp, DEVBOX_TEST=command-ok
+    DONE | 0.070s
+    pid=191 | exit_code=0
+    stdout:
+      command-ok
+    stderr:
+      error-ok
+  DO commands.run('python3 -c "print(40 + 2)"') | execute Python
+    DONE | 0.121s
+    pid=243 | exit_code=0
+    stdout:
+      42
+    stderr:
+      (empty)
+  DO commands.run('printf partial; printf deliberate >&2; exit 7', check=False)
+    DONE | 0.062s
+    pid=296 | exit_code=7
+    stdout:
+      partial
+    stderr:
+      deliberate
+PASS commands.foreground | 0.254s
+
+TEST 13 | commands.background
+  DO commands.run('sleep 1; printf background-ok', background=True, timeout=10)
+    DONE | 0.026s
+    pid=348
+    SDK returned a handle; the remote process can continue in the background
+  DO process.wait(pid=348) | wait for completion and collect output
+    DONE | 1.039s
+    pid=348 | exit_code=0
+    stdout:
+      background-ok
+    stderr:
+      (empty)
+PASS commands.background | 1.065s
+
+TEST 14 | commands.stdin
+  DO commands.run('cat', background=True, stdin=True, timeout=10)
+    DONE | 0.028s
+    pid=401
+  DO process.send_stdin('stdin-ok\n')
+    DONE | 0.192s
+  DO process.close_stdin() | send EOF so cat can finish
+    DONE | 0.031s
+  DO process.wait() | collect the echoed input
+    DONE | 0.001s
+    pid=401 | exit_code=0
+    stdout:
+      stdin-ok
+    stderr:
+      (empty)
+PASS commands.stdin | 0.251s
+
+TEST 15 | commands.reconnect
+  DO commands.run('read line; printf reconnected:%s "$line"', background=True, stdin=True)
+    DONE | 0.026s
+    pid=453
+  DO process.disconnect() | remote process stays alive
+    DONE | 0.000s
+  DO commands.connect(453)
+    DONE | 0.030s
+    pid=453
+  DO attached.send_stdin('proof-731\n')
+    DONE | 0.147s
+  DO attached.wait() | verify output after reconnect
+    DONE | 0.003s
+    pid=453 | exit_code=0
+    stdout:
+      reconnected:proof-731
+    stderr:
+      (empty)
+PASS commands.reconnect | 0.208s
+
+=== Files ===
+Create, read, inspect, move, upload, download and remove files
+
+TEST 16 | filesystem.basic
+  DO files.make_dir('/tmp/devbox-sdk-28308b20')
+    DONE | 0.035s
+  DO files.write('/tmp/devbox-sdk-28308b20/input.txt', 'file-ok')
+    DONE | 0.027s
+  DO files.read('/tmp/devbox-sdk-28308b20/input.txt')
+    DONE | 0.028s
+    result='file-ok'
+  DO files.stat('/tmp/devbox-sdk-28308b20/input.txt') | size in bytes
+    DONE | 0.027s
+    result=7
+  DO files.exists('/tmp/devbox-sdk-28308b20/input.txt')
+    DONE | 0.027s
+    result=True
+  DO files.list('/tmp/devbox-sdk-28308b20')
+    DONE | 0.076s
+    items=1
+    entries=['input.txt']
+  DO files.move('/tmp/devbox-sdk-28308b20/input.txt', '/tmp/devbox-sdk-28308b20/output.txt')
+    DONE | 0.030s
+  DO files.exists('/tmp/devbox-sdk-28308b20/output.txt')
+    DONE | 0.027s
+    result=True
+PASS filesystem.basic | 0.278s
+
+TEST 17 | filesystem.transfer
+  DO files.write('/tmp/devbox-sdk-28308b20/binary.dat', <1 MiB binary data>)
+    DONE | 0.152s
+  DO files.read_bytes('/tmp/devbox-sdk-28308b20/binary.dat')
+    DONE | 0.223s
+    verified 1048576 bytes, including NUL and non-UTF-8 bytes
+  DO files.upload('/tmp/tmpcw9y8nh5/source.txt', '/tmp/devbox-sdk-28308b20/transfer.txt') | content='transfer-ok'
+    DONE | 0.028s
+  DO files.download('/tmp/devbox-sdk-28308b20/transfer.txt', '/tmp/tmpcw9y8nh5/target.txt')
+    DONE | 0.027s
+  DO Read downloaded local file
+    DONE | 0.000s
+    result='transfer-ok'
+PASS filesystem.transfer | 0.433s
+
+TEST 18 | filesystem.remove
+  DO files.remove('/tmp/devbox-sdk-28308b20')
+    DONE | 0.028s
+PASS filesystem.remove | 0.028s
+
+=== Interactive terminal ===
+Start Bash, resize the terminal, send input and exit
+
+TEST 19 | pty.interaction
+  DO pty.start(rows=24, cols=80)
+    DONE | 0.028s
+    pid=505
+  DO pty.resize(pid=505, rows=30, cols=100)
+    DONE | 0.028s
+  DO session.send_stdin('printf \'\\n__PTY_%s__\\n\' "$((19+23))"; stty size; exit 7\n') | compute 42, inspect size, exit with code 7
+    DONE | 0.027s
+  DO session.wait() | read terminal output until Bash exits
+    DONE | 0.004s
+    pid=505 | exit_code=7
+    stdout:
+      
+      
+      Welcome to 6.6.60
+      
+      System information as of time: 	Mon Sep 14 08:07:24 UTC 2026
+      
+      System load: 	0.00
+      Processes: 	50
+      Memory used: 	1.0%
+      Swap used: 	0.0%
+      Usage On: 	87%
+      IP address: 	169.254.0.21
+      Users online: 	0
+      
+      
+      ]0;root@devbox:~[root@devbox ~]# printf '\n__PTY_%s__\n' "$((19+23))"; stty size; exit 7
+      
+      __PTY_42__
+      30 100
+      logout
+    stderr:
+      (empty)
+    completed session rejects further input
+PASS pty.interaction | 0.087s
+
+=== Git ===
+Initialize a repository, configure an author, stage and commit a file
+
+TEST 20 | git.workflow
+  DO commands.run('mkdir -p /tmp/devbox-sdk-git-286d2a92 && git -C /tmp/devbox-sdk-git-286d2a92 init -b main')
+    DONE | 0.073s
+    pid=564 | exit_code=0
+    stdout:
+      Initialized empty Git repository in /tmp/devbox-sdk-git-286d2a92/.git/
+    stderr:
+      (empty)
+  DO git.set_config(user.name='DevBox SDK')
+    DONE | 0.068s
+    pid=617 | exit_code=0
+    stdout:
+      (empty)
+    stderr:
+      (empty)
+  DO git.set_config(user.email='sdk@devbox.local')
+    DONE | 0.067s
+    pid=669 | exit_code=0
+    stdout:
+      (empty)
+    stderr:
+      (empty)
+  DO files.write(README.md, 'test\n')
+    DONE | 0.026s
+  DO git.add() | stage changes
+    DONE | 0.066s
+    pid=721 | exit_code=0
+    stdout:
+      (empty)
+    stderr:
+      (empty)
+  DO git.commit('test commit')
+    DONE | 0.099s
+    pid=773 | exit_code=0
+    stdout:
+      [main (root-commit) 0f851b3] test commit
+       1 file changed, 1 insertion(+)
+       create mode 100644 README.md
+    stderr:
+      (empty)
+  DO git show HEAD:README.md | verify committed content, not just exit code
+    DONE | 0.066s
+    pid=826 | exit_code=0
+    stdout:
+      test
+    stderr:
+      (empty)
+  DO git.status() | expect a clean working tree
+    DONE | 0.074s
+    pid=878 | exit_code=0
+    stdout:
+      ## main
+    stderr:
+      (empty)
+PASS git.workflow | 0.540s
+
+TEST 21 | git.remove
+  DO files.remove('/tmp/devbox-sdk-git-286d2a92')
+    DONE | 0.030s
+PASS git.remove | 0.030s
+
+=== Cleanup ===
+Delete the remote sandbox and close local connections
+
+TEST 22 | sandbox.delete
+  DO sandbox.kill()
+    DONE | 0.243s
+    result=True
+PASS sandbox.delete | 0.243s
+SUMMARY tests=22 passed=22 failed=0
+
+Process finished with exit code 0

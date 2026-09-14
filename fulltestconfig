@@ -1,0 +1,1 @@
+DEVBOX_API_KEY=devbox_ignHnYEbnpbr7I6XG6GVzjulnxgdCCsO;DEVBOX_API_URL=https://139.9.212.214:443;DEVBOX_GATEWAY_IP=110.41.63.59;DEVBOX_GATEWAY_URL=https://{tunnel_id}-{port}.cn-north-4-bridge.myhuaweicloud.com;DEVBOX_TEST_TEMPLATE=default;PYTHONUNBUFFERED=1

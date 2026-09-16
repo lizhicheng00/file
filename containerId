@@ -1,0 +1,34 @@
+func (m *K8sDelegate) getContainerID(ctx context.Context, devc hdspace.Devc) string {
+	pod := &corev1.Pod{}
+	if err := m.Client.Get(ctx, client.ObjectKey{
+		Namespace: devc.Namespace,
+		Name:      devc.Name,
+	}, pod); err != nil {
+		return ""
+	}
+
+	if len(pod.Status.ContainerStatuses) == 0 {
+		return ""
+	}
+
+	return pod.Status.ContainerStatuses[0].ContainerID
+}
+
+for _, devc := range devcList {
+	metering := entity.Metering{
+		// ... existing fields
+
+		ContainerID: m.getContainerID(ctx, devc),
+	}
+
+	// send/save metering...
+}
+
+ALTER TABLE your_metering_table
+ADD COLUMN container_id VARCHAR(128) NULL COMMENT 'runtime container id';
+
+type Metering struct {
+	// ... existing fields
+
+	ContainerID string `gorm:"column:container_id;type:varchar(128)"`
+}

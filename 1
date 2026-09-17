@@ -4,3 +4,10 @@
 
 
 --label "org.opencontainers.image.version=${VERSION}"  
+
+
+docker build \
+  -t "registry-cbu.huawei.com/${IMG_ORG}/${MODULE}:${VERSION}.${PLATFORM}" \
+  --build-arg TARGETARCH=${ARCH} \
+  --label "ci.build.identity=${VERSION}-${PLATFORM}-$(date +%s%N)" \
+  .

@@ -1,0 +1,50 @@
+func (m *K8sDelegate) Meter() *message.ResourceMetering {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
+	defer cancel()
+
+	devcList := m.queryAllActiveDevc(ctx)
+
+	// 一次性获取当前所有 Pod 的 ContainerID
+	containerIDs := make(map[string]string)
+	podList := &v1.PodList{}
+	if err := m.Client.List(ctx, podList); err == nil {
+		for _, pod := range podList.Items {
+			if len(pod.Status.ContainerStatuses) == 0 {
+				continue
+			}
+
+			key := pod.Namespace + "/" + pod.Name
+			containerIDs[key] = pod.Status.ContainerStatuses[0].ContainerID
+		}
+	}
+
+	meterings := make([]entity.Metering, 0, len(devcList))
+	for _, devc := range devcList {
+		metering := entity.Metering{
+			InstanceID:   devc.Name,
+			ResourceKind: entity.DevcKind,
+			Cores:        devc.Spec.Cores,
+			Memory:       devc.Spec.Memory,
+			NpuModel:     devc.Spec.NpuModel,
+			NpuCards:     devc.Spec.NpuCards,
+			Phase:        entity.Phase(strings.ToUpper(string(devc.Status.Phase))),
+			Namespace:    devc.Namespace,
+			ContainerID:  getContainerID(containerIDs, devc),
+		}
+
+		if metering.Phase == entity.DevcPhaseFailed {
+			metering.Phase = entity.DevcPhaseStopping
+		}
+
+		meterings = append(meterings, metering)
+	}
+
+	return &message.ResourceMetering{
+		Timestamp: uint64(time.Now().Unix()),
+		Meterings: meterings,
+	}
+}
+
+func getContainerID(containerIDs map[string]string, devc hdspace.Devc) string {
+	return containerIDs[devc.Namespace+"/"+devc.Name]
+}

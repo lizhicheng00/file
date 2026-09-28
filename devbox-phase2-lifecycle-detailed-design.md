@@ -1,6 +1,6 @@
 # DevBox 沙箱生命周期增强详细设计 Story
 
-本文描述 DevBox Manager 与 Python/JavaScript SDK 负责的沙箱生命周期增强。沙箱运行时、快照文件和虚拟机恢复由下层节点执行，本文只定义 Manager 的业务编排以及 SDK 对用户提供的能力。
+本文描述 DevBox Manager 与 Python/JavaScript SDK 负责的沙箱生命周期增强。Manager 是跨 region、跨集群部署的全局控制面；沙箱运行时、快照文件和虚拟机恢复由下层节点执行。
 
 ## 1 价值描述
 
@@ -25,6 +25,8 @@
 - 暂停后保留沙箱 ID、文件、内存和进程现场。
 - 恢复后继续使用同一沙箱，并获得新的数据面连接凭证。
 - `connect` 遇到暂停沙箱时完成恢复，保持与 E2B 接近的使用方式。
+- 创建时可以选择超时销毁或超时自动暂停。
+- 开启 auto resume 后，Gateway 收到数据面请求时可以按 tunnel ID 自动唤醒暂停沙箱。
 - timeout 可以缩短或延长沙箱生命周期，refresh 只能延长。
 - 到期沙箱不能通过续期接口重新激活，并最终完成节点、隧道和状态回收。
 - Python 同步/异步 SDK 与 JavaScript SDK 保持一致的业务语义。
@@ -41,7 +43,7 @@
 
 #### 恢复与连接
 
-暂停沙箱可以通过 `resume` 显式恢复，也可以通过 `connect` 恢复。恢复使用原节点上的暂停快照，保持原 sandbox ID，并重新申请运行配额、Relay tunnel 和 connect token。
+暂停沙箱可以通过 `resume` 显式恢复，也可以通过 `connect` 恢复。恢复使用原节点上的暂停快照，保持原 sandbox ID，并重新申请运行配额、续期既有 Relay tunnel 和签发连接凭证。
 
 `connect` 的行为取决于沙箱状态：
 
@@ -52,7 +54,17 @@
 | `pausing`、`killing`、`snapshotting` | 返回状态冲突 |
 | `killed`、不存在或已经到期 | 返回不存在 |
 
-SDK 不在每次文件、命令或 PTY 操作前隐式恢复沙箱。暂停状态下执行数据面操作会得到清晰的状态错误，用户应先调用 `resume()` 或 `connect()`。这可以避免一次普通读取产生隐式启动、额外延迟和并发恢复。
+未开启 auto resume 时，暂停状态下的数据面操作会提示用户先调用 `resume()` 或 `connect()`。开启后，SDK 直接向 Gateway 发送原请求；Gateway 根据请求中的 tunnel ID 调用 Manager 内部恢复接口，恢复成功后重试原请求。SDK 不额外调用 Manager，也不管理恢复并发。
+
+#### 超时自动暂停与流量唤醒
+
+创建沙箱时可设置生命周期策略：
+
+- `onTimeout=kill`：到期后销毁，为默认行为。
+- `onTimeout=pause`：到期后生成内存快照并暂停，保留 24 小时。
+- `autoResume=true`：仅能与 `onTimeout=pause` 组合，允许 Gateway 流量唤醒。
+
+Gateway 只持有 tunnel ID，不需要用户 API Key 或 namespace。Manager 通过 `t_sandbox.tunnel_id` 找到沙箱及其 namespace，在数据库行锁内完成恢复。并发唤醒同一 tunnel 时只执行一次恢复，其余请求在确认沙箱已运行后按成功处理。
 
 #### 生命周期调整
 
@@ -83,10 +95,12 @@ SDK 不在每次文件、命令或 PTY 操作前隐式恢复沙箱。暂停状�
 - 快照当前保存在原节点，恢复必须回到原节点；原节点不可用时返回服务不可用，不能跨节点恢复。
 - 暂停状态默认保留 24 小时，到期后沙箱进入终态。
 - Manager 依赖 MySQL 保存权威状态，Redis 保存运行视图、到期索引和配额计数。
-- 恢复依赖 Relay 创建新的 tunnel 和 token；旧 SDK 数据面连接在暂停后失效。
+- 恢复依赖 Relay 续期同一 tunnel 并签发新 token；自动唤醒时 tunnel ID 不允许变化。
 - 多 Manager 实例通过数据库状态串行化同一沙箱的生命周期操作，后台回收任务使用分布式调度锁。
 - 节点快照物理文件的删除依赖下层提供清理能力；Manager 删除快照记录不等同于已经删除节点文件。
-- 超时自动暂停、流量访问自动唤醒和仅文件系统快照尚不具备完整的下层能力，对相关配置返回参数错误。
+- Gateway 到 Manager 的唤醒接口仅在独立 mTLS 端口开放，不经过公网 API Key 鉴权链路。
+- Gateway 需要在 Manager 返回成功后重试原数据面请求；旧 connect token 在该次请求重试期间必须仍然有效。
+- 仅文件系统快照暂不开放。
 
 ## 3 实现设计
 
@@ -97,7 +111,8 @@ SDK 不在每次文件、命令或 PTY 操作前隐式恢复沙箱。暂停状�
 | 组件 | 职责 |
 |---|---|
 | SDK | 提供 pause、resume、connect、set timeout、refresh；维护本地状态并关闭失效的数据面连接 |
-| Manager | 校验状态，编排快照、恢复、配额、Tunnel 和持久化，执行到期回收 |
+| Gateway | 识别暂停 tunnel，通过 mTLS 调用 Manager，恢复后重试原数据面请求 |
+| Manager | 作为全局控制面校验状态，编排快照、恢复、配额、Tunnel 和持久化，执行到期回收 |
 | 节点运行时 | 生成内存与文件系统快照，从快照恢复实例，按截止时间停止实例 |
 
 MySQL 是跨实例的权威状态。Redis 用于快速连接视图、运行数量和到期扫描，但 Redis 数据缺失时，Manager 仍通过 MySQL 完成查询与回收。
@@ -105,7 +120,7 @@ MySQL 是跨实例的权威状态。Redis 用于快速连接视图、运行数�
 生命周期主状态如下：
 
 ```text
-                  pause
+             pause / timeout policy
     running -----------------> paused
        |                         |
        | timeout/delete          | resume/connect
@@ -142,7 +157,23 @@ MySQL 是跨实例的权威状态。Redis 用于快速连接视图、运行数�
 
 恢复请求结果不明确时，Manager 不盲目重复创建。只有确认本次恢复实例已经清理，才允许再次恢复，避免出现同一 sandbox ID 对应多个运行实例。
 
-#### 3.2.3 Timeout 与 Refresh 流程
+#### 3.2.3 自动暂停流程
+
+1. 到期任务发现 running 沙箱已到期且 `auto_pause=true`。
+2. Manager 锁定数据库记录并重新确认状态、策略和截止时间，排除刚续期的旧扫描结果。
+3. Manager 从 Redis 或 MySQL 读取完整恢复配置，调用节点生成快照并暂停。
+4. Manager 将状态改为 paused，记录 24 小时保留截止时间并释放运行配额。
+5. 暂停完成后 tunnel 仍作为 Gateway 唤醒与路由的稳定标识。
+
+#### 3.2.4 Gateway 自动唤醒流程
+
+1. Gateway 收到指向暂停 tunnel 的命令、文件、PTY 或代理请求。
+2. Gateway 使用客户端证书调用 Manager 独立 mTLS 端口，并传入 tunnel ID。
+3. Manager 查询全局 `t_sandbox`，只接受未过保留期且 `auto_resume=true` 的 paused 沙箱。
+4. Manager 在行锁内恢复快照、运行配额和同一 tunnel；恢复完成返回 204。
+5. Gateway 等待成功后重试原请求，客户端无需重新发起 connect。
+
+#### 3.2.5 Timeout 与 Refresh 流程
 
 1. Manager 校验沙箱属于调用 namespace、状态为 running、尚未到期。
 2. 计算新的截止时间：timeout 直接覆盖，refresh 取原值与新值中的较大值。
@@ -150,11 +181,11 @@ MySQL 是跨实例的权威状态。Redis 用于快速连接视图、运行数�
 4. 对 0 至 5 秒的短生命周期，不再向节点发送可能因网络耗时而失效的更新请求，由 Manager 到期任务完成回收。
 5. 操作成功后按需异步延长 Relay tunnel，确保 tunnel 生命周期覆盖沙箱生命周期。
 
-#### 3.2.4 到期流程
+#### 3.2.6 到期流程
 
 1. 后台任务从 Redis 和 MySQL 合并获取到期候选数据。
 2. 再次读取并锁定数据库记录，防止刚完成续期或恢复的沙箱被误删。
-3. 确认仍然到期后清理节点实例和 Relay tunnel。
+3. `auto_pause=true` 的 running 沙箱执行暂停；其他到期沙箱清理节点实例和 Relay tunnel。
 4. 更新数据库终态，清理 Redis 和暂停快照记录。
 5. 节点清理失败时保留当前状态，下一轮继续重试，不提前声明回收成功。
 
@@ -183,6 +214,10 @@ connect:     running 时等同 refresh，paused 时按 timeout 恢复
 
 暂停快照记录保存 sandbox ID、namespace、原节点、快照标识和恢复配置。恢复只消费与当前沙箱匹配的有效暂停快照，成功后删除该记录。快照与 namespace 不匹配、配置不完整或原节点不可用时，不创建替代沙箱。
 
+#### tunnel 唤醒一致性
+
+`sandbox_id` 继续使用 UUID，不因 Gateway 或 global 架构改变。Gateway 以当前请求已经携带的 `tunnel_id` 定位沙箱。恢复时 Relay upsert 必须返回相同 tunnel ID；如果发生变化，Manager 回滚本次恢复并返回失败，避免 Gateway 将原请求重试到错误实例。
+
 ### 3.4 关键代码
 
 Manager 关键模块：
@@ -192,10 +227,12 @@ Manager 关键模块：
 | `internal/handlers/sandbox_pause.go` | 暂停编排及快照记录 |
 | `internal/handlers/sandbox_resume.go` | 快照恢复、配额和连接凭证更新 |
 | `internal/handlers/sandbox_connect.go` | running 连接与 paused 自动恢复 |
+| `internal/handlers/sandbox_auto_resume.go` | Gateway 按 tunnel ID 自动唤醒 |
 | `internal/handlers/sandbox_deadline.go` | timeout、refresh、connect 共用截止时间逻辑 |
 | `internal/handlers/sandbox_timeout.go` | 覆盖式生命周期设置 |
 | `internal/handlers/sandbox_refresh.go` | 只延长生命周期 |
 | `internal/orchestrator/orchestrator.go` | 节点暂停、恢复、截止时间同步和到期回收 |
+| `cmd/internal_server.go` | 独立 mTLS 控制端口 |
 
 SDK 关键模块：
 
@@ -218,6 +255,14 @@ SDK 关键模块：
 | POST | `/sandboxes/{sandboxID}/timeout` | `{ "timeout": 7200 }` | 204 | 覆盖剩余生命周期 |
 | POST | `/sandboxes/{sandboxID}/refreshes` | `{ "duration": 7200 }` | 204 | 只延长剩余生命周期 |
 
+#### Gateway 内部 API
+
+该接口只监听 `INTERNAL_PORT`，强制校验 Gateway 客户端证书，不在公开 API 端口注册。
+
+| 方法 | 路径 | 成功响应 | 说明 |
+|---|---|---|---|
+| POST | `/open-api-inner/v1/devbox-manager/tunnels/{tunnelId}/resume` | 204 | 已运行时幂等成功；暂停时按策略恢复 |
+
 主要错误语义：
 
 | HTTP 状态 | 场景 |
@@ -233,6 +278,9 @@ SDK 关键模块：
 Python：
 
 ```python
+sandbox = Sandbox.create(
+    lifecycle=SandboxLifecycle(on_timeout="pause", auto_resume=True)
+)
 sandbox.pause()
 sandbox.resume(timeout=300)
 Sandbox.connect(sandbox_id, timeout=300)
@@ -243,6 +291,9 @@ sandbox.refresh(7200)
 JavaScript：
 
 ```javascript
+const sandbox = await Sandbox.create({
+  lifecycle: { onTimeout: "pause", autoResume: true }
+})
 await sandbox.pause()
 await sandbox.resume({ timeout: 300 })
 await Sandbox.connect(sandboxId, { timeout: 300 })
@@ -266,6 +317,8 @@ await sandbox.refresh(7200)
 | `end_time` | 当前生命周期截止时间 |
 | `actual_end_time` | 实际终止时间 |
 | `tunnel_id` | 当前运行实例对应的 Relay tunnel |
+| `auto_pause` | 到期时暂停而不是销毁 |
+| `auto_resume` | 是否允许 Gateway 流量唤醒 |
 | `connect_token` | 加密保存的数据面连接凭证 |
 | `token_expiration` | connect token 过期时间 |
 | `tunnel_expiration` | tunnel 过期时间 |
@@ -283,4 +336,4 @@ await sandbox.refresh(7200)
 | `origin_node_id` | 保存快照的原节点 |
 | `created_at` | 快照创建时间 |
 
-暂停快照以 `(sandbox_id, namespace, is_paused)` 进行查询。恢复和删除按 snapshot ID 或 sandbox ID 清理记录，沙箱状态仍以 `t_sandbox` 为权威来源。
+暂停快照以 `(sandbox_id, namespace, is_paused)` 进行查询。恢复和删除按 snapshot ID 或 sandbox ID 清理记录，沙箱状态仍以 `t_sandbox` 为权威来源。`t_sandbox.tunnel_id` 建立查询索引，供全局 Manager 的 Gateway 唤醒入口快速定位沙箱。

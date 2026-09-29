@@ -40,7 +40,7 @@
 
 Manager `connect` 只负责确保沙箱可连接并返回凭证，不建立或保持数据面连接。实际连接由 SDK 使用 `connectToken` 访问 Gateway。
 
-连接凭证的生命周期由 Manager 管理。启用自动恢复时，Manager 保证凭证覆盖当前运行期和暂停保留窗口；用户不直接续签 Token，主动恢复或重新连接时由 SDK 接收并替换最新凭证。
+沙箱截止时间、Tunnel 租约和 Token 租约相互独立：沙箱截止时间决定运行或暂停，Tunnel 租约保证路由存在，`connectToken` 是固定 24 小时的访问凭证。SDK 在 Token 到期前通过 Manager `connect` 静默获取当前凭证；Manager 必要时向 Relay 续签。用户不直接管理 Token。
 
 #### 生命周期策略
 
@@ -69,6 +69,7 @@ Manager 定期收敛到期状态。对于超时自动暂停的沙箱执行暂停
 - 自动恢复依赖 Gateway、`vsock_proxy`、Manager 内部 mTLS 接口和 Relay tunnel 协同。
 - MySQL 保存权威生命周期状态，Redis 保存运行视图、到期索引和配额计数。
 - 自动恢复必须保持 tunnel ID 不变，避免原请求被转发到错误实例。
+- Relay 新签发 Token 不提前撤销尚未到期的旧 Token，保证唤醒中的请求可以完成。
 
 ## 3 实现设计
 

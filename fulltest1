@@ -1,0 +1,201 @@
+/home/huawei/IdeaProjects/devspace-devbox/python-sdk/.venv/bin/python /home/huawei/IdeaProjects/devspace-devbox/python-sdk/examples/run_local.py validate_full --lifecycle-only
+Local DNS: *-49983.devbox-s2.hwtunnel.com -> 110.41.63.59
+DevBox lifecycle validation | template=default
+gateway=https://{tunnel_id}-{port}.devbox-s2.hwtunnel.com
+
+=== Templates ===
+List available templates and select a concrete build
+
+TEST 01 | templates.list
+  DO templates.list()
+    DONE | 0.139s
+    items=3
+    devbox-base-4g | id=tpl-devbox-base-4g | build=devbox-base-4g-aarch64-20261019013859 | aliases=base-4g | cpu=2 | memory=4096 MiB
+    devbox-base-test | id=tpl-devbox-base-test | build=devbox-base-test-aarch64-20261015111035 | aliases=default | cpu=2 | memory=1024 MiB
+    devbox-opencode | id=tpl-devbox-opencode | build=devbox-opencode-aarch64-20261015111015 | aliases=opencode | cpu=1 | memory=512 MiB
+    SELECT devbox-base-test | build=devbox-base-test-aarch64-20261015111035
+PASS templates.list | 0.139s
+
+=== Create sandbox ===
+Start template='default', timeout=300s, with an isolated runtime
+
+TEST 02 | sandbox.create
+  DO sandboxes.create(envs=..., lifecycle={on_timeout:'pause', auto_resume:True})
+    DONE | 0.366s
+PASS sandbox.create | 0.366s
+sandbox_id=72216429-153d-46fd-b3d4-3e0d2af7012f
+
+=== Lifecycle ===
+Keep files, environment and the original process across pause and recovery
+
+TEST 03 | lifecycle.prepare
+  DO files.write('/tmp/devbox-lifecycle-59b36a2e', <1 MiB>) | persistence proof
+    DONE | 0.333s
+  DO commands.run('sleep 900', background=True)
+    DONE | 0.047s
+    pid=103
+  DO process.disconnect() | keep the remote process alive
+    DONE | 0.000s
+PASS lifecycle.prepare | 0.380s
+
+TEST 04 | lifecycle.deadlines
+  DO set_timeout(7200) | remaining lifetime becomes 2h (greater than 1h)
+    DONE | 0.040s
+  DO sandbox.get_info() | read the real Manager deadline
+    DONE | 0.027s
+    state=running | template=tpl-devbox-base-test | end_at=2026-10-19 04:35:54+00:00
+    CHECK remaining=7200.4s | expires_at=2026-10-19T04:35:54+00:00
+  DO refresh(120) | must not shorten the existing 2h deadline
+    DONE | 0.023s
+  DO get_info() | compare deadline
+    DONE | 0.025s
+    state=running | template=tpl-devbox-base-test | end_at=2026-10-19 04:35:54+00:00
+  DO set_timeout(300) | explicitly shorten remaining lifetime to 5min
+    DONE | 0.039s
+  DO sandbox.get_info() | read the real Manager deadline
+    DONE | 0.025s
+    state=running | template=tpl-devbox-base-test | end_at=2026-10-19 02:40:54+00:00
+    CHECK remaining=300.3s | expires_at=2026-10-19T02:40:54+00:00
+  DO refresh(600) | extend remaining lifetime to at least 10min
+    DONE | 0.039s
+  DO sandbox.get_info() | read the real Manager deadline
+    DONE | 0.023s
+    state=running | template=tpl-devbox-base-test | end_at=2026-10-19 02:45:54+00:00
+    CHECK remaining=600.2s | expires_at=2026-10-19T02:45:54+00:00
+PASS lifecycle.deadlines | 0.242s
+
+TEST 05 | lifecycle.manual_resume
+  DO sandbox.pause() | save the running instance
+    DONE | 0.356s
+  DO get_info() | expect paused
+    DONE | 0.023s
+    state=paused | template=tpl-devbox-base-test | end_at=2026-10-20 02:35:54+00:00
+  DO sandbox.resume(timeout=300) | restore this sandbox handle
+    DONE | 0.420s
+  DO sandbox.get_info() | read the real Manager deadline
+    DONE | 0.022s
+    state=running | template=tpl-devbox-base-test | end_at=2026-10-19 02:40:54+00:00
+    CHECK remaining=299.4s | expires_at=2026-10-19T02:40:54+00:00
+  DO files.read_bytes() | compare all 1 MiB after recovery
+    DONE | 1.070s
+    bytes=1048576 | content checked separately
+    CHECK file content: identical (1 MiB)
+  DO commands.list() | find the original running PID
+    DONE | 0.066s
+    items=2
+    CHECK original process: pid=103, still running
+  DO commands.run('printf "%s|%s" "$DEVBOX_ID" "$DEVBOX_SDK_ENV"') | verify sandbox identity and create-time environment
+    DONE | 0.152s
+    pid=158 | exit_code=0
+    stdout:
+      72216429-153d-46fd-b3d4-3e0d2af7012f|created-731
+    stderr:
+      (empty)
+  DO sandbox.get_info()
+    DONE | 0.028s
+    state=running | template=tpl-devbox-base-test | end_at=2026-10-19 02:40:54+00:00
+PASS lifecycle.manual_resume | 2.139s
+
+TEST 06 | lifecycle.connect_resume
+  DO sandbox.pause()
+    DONE | 0.385s
+  DO sandbox.close() | close local connections, not the sandbox
+    DONE | 0.000s
+  DO sandboxes.connect(id, timeout=300) | Manager restores the paused sandbox
+    DONE | 0.386s
+  DO connected.files.read_bytes() | same remote filesystem
+    DONE | 1.065s
+    bytes=1048576 | content checked separately
+  DO sandbox.get_info() | read the real Manager deadline
+    DONE | 0.023s
+    state=running | template=tpl-devbox-base-test | end_at=2026-10-19 02:40:56+00:00
+    CHECK remaining=298.2s | expires_at=2026-10-19T02:40:56+00:00
+  DO connected.close() | release the extra SDK handle
+    DONE | 0.000s
+  DO files.read_bytes() | compare all 1 MiB after recovery
+    DONE | 1.058s
+    bytes=1048576 | content checked separately
+    CHECK file content: identical (1 MiB)
+  DO commands.list() | find the original running PID
+    DONE | 0.044s
+    items=3
+    CHECK original process: pid=103, still running
+  DO commands.run('printf "%s|%s" "$DEVBOX_ID" "$DEVBOX_SDK_ENV"') | verify sandbox identity and create-time environment
+    DONE | 0.153s
+    pid=211 | exit_code=0
+    stdout:
+      72216429-153d-46fd-b3d4-3e0d2af7012f|created-731
+    stderr:
+      (empty)
+  DO sandbox.get_info()
+    DONE | 0.026s
+    state=running | template=tpl-devbox-base-test | end_at=2026-10-19 02:40:56+00:00
+PASS lifecycle.connect_resume | 3.142s
+
+TEST 07 | lifecycle.gateway_auto_resume
+  DO set_timeout(10) | on_timeout=pause, auto_resume=True
+    DONE | 0.040s
+  WAIT Manager state=paused | polling every 2s, maximum 90s
+    STATE running | elapsed=0.023s
+    STATE pausing | elapsed=10.180s
+    STATE paused | elapsed=28.440s
+  DO sandbox.close() | force a fresh data-plane connection
+    DONE | 0.001s
+    FLOW SDK request -> Gateway -> Manager gRPC -> restored runtime
+    No explicit sandbox.resume() or sandboxes.connect() call follows.
+  DO commands.run('printf gateway-wake-ok') | access the paused sandbox directly
+    DONE | 0.640s
+    pid=264 | exit_code=0
+    stdout:
+      gateway-wake-ok
+    stderr:
+      (empty)
+  DO files.read_bytes() | compare all 1 MiB after recovery
+    DONE | 0.991s
+    bytes=1048576 | content checked separately
+    CHECK file content: identical (1 MiB)
+  DO commands.list() | find the original running PID
+    DONE | 0.029s
+    items=3
+    CHECK original process: pid=103, still running
+  DO commands.run('printf "%s|%s" "$DEVBOX_ID" "$DEVBOX_SDK_ENV"') | verify sandbox identity and create-time environment
+    DONE | 0.081s
+    pid=317 | exit_code=0
+    stdout:
+      72216429-153d-46fd-b3d4-3e0d2af7012f|created-731
+    stderr:
+      (empty)
+  DO sandbox.get_info()
+    DONE | 0.023s
+    state=running | template=tpl-devbox-base-test | end_at=2026-10-19 02:41:28+00:00
+PASS lifecycle.gateway_auto_resume | 30.246s
+
+=== Cleanup ===
+Delete the remote sandbox and close local connections
+
+TEST 08 | sandbox.delete
+  DO sandbox.kill()
+    DONE | 0.079s
+    result=True
+PASS sandbox.delete | 0.079s
+
+TEST 09 | lifecycle.timeout_kill
+
+=== Timeout cleanup ===
+A separate sandbox uses on_timeout=kill, not pause
+  DO sandboxes.create(timeout=10, lifecycle=kill)
+    DONE | 0.702s
+    sandbox_id=80f4dce6-bb32-4425-b605-32f7f1f5892c
+  WAIT Manager state=stopped | polling every 2s, maximum 90s
+    STATE running | elapsed=0.022s
+    STATE stopped | elapsed=10.144s
+  DO sandbox.is_running() | expect False
+    DONE | 0.022s
+    result=False
+  DO sandbox.kill() | cleanup is safe even after expiration
+    DONE | 0.035s
+    result=True
+PASS lifecycle.timeout_kill | 10.925s
+SUMMARY tests=9 passed=9 failed=0 elapsed=47.741s
+
+Process finished with exit code 0

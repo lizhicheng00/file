@@ -1,0 +1,1 @@
+DEVBOX_API_KEY1=devbox_5EN2fbtqGqPHvm1WZA9m1FSBaRJ52ctY;DEVBOX_API_URL=https://devbox-test.developer.myhuaweicloud.com;DEVBOX_GATEWAY_IP=110.41.63.59;DEVBOX_GATEWAY_SKIP_TLS_VERIFY=false;DEVBOX_GATEWAY_URL=https://{tunnel_id}-{port}.devbox-s2.hwtunnel.com;DEVBOX_TEST_TEMPLATE=default;PYTHONUNBUFFERED=1;DEVBOX_API_KEY=devbox_A6friaUMzz7CZI8HUj7XniMq0VR-YdqK

@@ -1,0 +1,40 @@
+只需修改 `SimplePoolScorer.pickClusterUid()` 中的两处调用：
+
+```
+return weightedRandomSelect(priorityPools);
+```
+
+改为：
+
+```
+return maxAvailableSelect(priorityPools);
+```
+
+以及：
+
+```
+return weightedRandomSelect(candidates);
+```
+
+改为：
+
+```
+return maxAvailableSelect(candidates);
+```
+
+新增方法：
+
+```
+
+private static NodePoolRegistry maxAvailableSelect(List<NodePool> candidates) {
+    return candidates.stream()
+            .max(Comparator.comparingInt(p -> p.availableNodes))
+            .orElseThrow()
+            .pool;
+}
+
+```
+
+效果： 保留原有 Region 优先级和过滤逻辑，只将最终的加权随机改为选择 `availableNodes` 最大的池。
+
+注意：相同可用节点数时，当前实现会固定选择其中一个池。

@@ -1,280 +1,94 @@
-结合你这次提供的真实资源池数据，我建议BMS 保留 100 核基础保护、每节点碎片预算从 3 核降到 2 核；ECS 不再固定预留 2 个节点，而是按资源池总节点数的 2% 动态预留。
+建议直接沿用 `schedule` 前缀，不新开顶级配置。
 
-这次只配置三个参数，不额外增加复杂评分项。
+因为这三个参数都属于资源池调度策略，不属于 CCE 资源管理、计量或其他模块。
 
-## 一、重新确定三个默认值
+而且 `schedule` 已经存在，放在它下面最自然。
 
-BMS 基础预留
+## 1. application.yaml
 
-## 100 核
-
-保留原值。它表示老用户恢复保护目标，而不是从当前资源快照中能推算出来的数值。你目前的单节点最大剩余 CPU 数据，还不足以证明应该把它改成 50 或 150 核。
-
-BMS 每节点碎片预算
-
-3 核
-
-## 2 核
-
-你观察到每台机器可能剩余 2～3 核难以分配。先按 2 核估算更适度，减少大池被过度保护的情况。
-
-ECS 预留比例
-
-固定 2 节点
-
-## 2%
-
-你的 ECS 池从 10 台到 998 台差异很大。固定预留 2 台，对小池可能过多，对大池明显不足。比例配置更适合当前数据。
-
-### 用你提供的 ECS 数据验证
-
-采用：
-
-\\[ ReserveNodes=\max(1,\lceil AllocatableNodes\times 2\\%\rceil) \\]
-
-| 总节点 | 当前可用 | 预留 | 新用户最多还能分配 |
-| --- | ---- | -- | --------- |
-| 10  | 10   | 1  | 9         |
-| 50  | 50   | 1  | 49        |
-| 183 | 17   | 4  | 13        |
-| 199 | 180  | 4  | 176       |
-| 500 | 83   | 10 | 73        |
-| 998 | 60   | 20 | 40        |
-| 752 | 457  | 16 | 441       |
-| 500 | 0    | 10 | 0         |
-
-这比固定预留两个节点更符合资源池规模差异。尤其是 998 台机器却只剩 60 台可用的池，保留 20 台作为恢复缓冲，比只留 2 台更稳健。
-
-这里采用 `AllocatableNodes` 而不是 `AvailableNodes` 计算预留，是为了预留目标不会随着资源池被消耗而不断降低。
-
-### BMS 的动态预留
-
-新公式是：
-
-\\[ ReserveCores=100+2\times AvailableNodes \\]
-
-| BMS 节点数 | 预留 CPU |
-| ------- | ------ |
-| 1       | 102 核  |
-| 4       | 108 核  |
-| 18      | 136 核  |
-| 35      | 170 核  |
-
-这些数值基本落在你希望保护的 100～200 核附近。
-
-需要说明：这些默认值是根据当前资源池规模和你的恢复保护目标选出的初始策略参数，还不能视为经过真实开关机数据验证的最优值。
-
-## 二、JSON 配置
-
-建议使用这样的 JSON，三个参数都有独立含义：
-
-pool-reserve.json
-
-&#x20;复制
+推荐这样配置：
 
 ```
-{
-  "bmsBaseReservedCores": 100,
-  "bmsPerNodeFragmentCores": 2,
-  "ecsReserveRatio": 0.02
-}
+schedule:
+  pool-reserve:
+    bms-base-cores: 100
+    bms-per-node-cores: 2
+    ecs-reserve-ratio: 0.02
 ```
 
-Java 配置对象可以直接用 `record`（如果项目使用 Java 16+）：
+三个配置分别表示：
+
+| 参数                   | 含义            | 默认值   |
+| -------------------- | ------------- | ----- |
+| `bms-base-cores`     | BMS 基础 CPU 预留 | 100 核 |
+| `bms-per-node-cores` | BMS 每节点碎片预算   | 2 核   |
+| `ecs-reserve-ratio`  | ECS 总节点数预留比例  | 2%    |
+
+这样层级很明确：
 
 ```
-public record PoolReserveConfig(
-        long bmsBaseReservedCores,
-        long bmsPerNodeFragmentCores,
-        double ecsReserveRatio
-) {}
+schedule
+  └── pool-reserve
+        ├── bms-base-cores
+        ├── bms-per-node-cores
+        └── ecs-reserve-ratio
 ```
 
-由现有 JSON 配置加载方式读取一次并传给 `PoolSelector`，不要每次调度重新读取文件。
+## 2. Java 读取配置
 
-例如在 `PoolSelector` 增加：
-
-```
-private final PoolReserveConfig reserveConfig;
-```
-
-构造函数增加 `PoolReserveConfig reserveConfig` 参数并赋值，原来的两个依赖不变。
-
-## 三、Go：BMS 上报只新增一项
-
-Common：
+如果现在只使用三个参数，为了最小改动，直接在 `PoolSelector` 中注入即可：
 
 ```
-SumAvailableCores uint64 `json:"sumAvailableCores" gorm:"column:sum_available_cores"`
+@Value("${schedule.pool-reserve.bms-base-cores:100}")
+private long bmsBaseCores;
+
+@Value("${schedule.pool-reserve.bms-per-node-cores:2}")
+private long bmsPerNodeCores;
+
+@Value("${schedule.pool-reserve.ecs-reserve-ratio:0.02}")
+private double ecsReserveRatio;
 ```
 
-Agent 的 `calculateBMSPoolResources()` 中，在已经计算出 `availableCores` 之后：
+这里要求 `PoolSelector` 是由 Spring 管理的 Bean，否则 `@Value` 不会生效。
+
+### BMS 计算
 
 ```
-if availableCores < 0 {
-    availableCores = 0
-}
-
-// 新增
-pool.SumAvailableCores += uint64(availableCores)
+long reserve = (bmsBaseCores
+        + bmsPerNodeCores * pool.getAvailableNodes()) * 1000L;
 ```
 
-原来的 `MaxAvailableCores` 和 `MaxAvailableMemory` 计算全部保留。
-
-这段代码要求 `availableCores` 是有符号整数，且 `getNodeAllocatedResources()` 统计的是 Pod 的 CPU requests。不要用无符号整数直接相减。
-
-ECS 上报代码完全不修改。
-
-数据库：
+### ECS 计算
 
 ```
-ALTER TABLE t_node_pool_registry
-ADD COLUMN sum_available_cores BIGINT NOT NULL DEFAULT 0;
+int reserve = Math.max(1,
+        (int) Math.ceil(pool.getAllocatableNodes() * ecsReserveRatio));
 ```
 
-cluster-controller 确保新字段参与 NodePool 的插入和更新即可。
+其他 Scorer 逻辑不需要改。
 
-## 四、Java：只修改 PoolSelector
+## 3. 要不要建新的配置类？
 
-### 1. BMS 评分
+我的建议是：
 
-```
-private long bmsScore(NodePoolRegistry pool, DevcsEntity devc) {
-    long request = (long) devc.getCores() * 1000L;
+- 如果项目已经有 `ScheduleProperties` 或 `ScheduleConfig`：直接复用现有配置类，增加三个字段。
+- 如果没有：目前三个简单参数，直接用 `@Value` 就够了，不需要专门新建配置类。
+- 如果以后调度参数明显增加，再考虑统一用 `@ConfigurationProperties` 管理。
 
-    if (pool.getAvailableNodes() <= 0
-            || pool.getSumAvailableCores() == null
-            || pool.getMaxAvailableCores() < request) {
-        return -1;
-    }
+这样避免为三个参数增加额外结构。
 
-    long reserve = (
-            reserveConfig.bmsBaseReservedCores()
-            + reserveConfig.bmsPerNodeFragmentCores()
-            * pool.getAvailableNodes()
-    ) * 1000L;
+## 最终建议
 
-    return pool.getSumAvailableCores() - request - reserve;
-}
-```
-
-`score >= 0` 才允许新用户进入该 BMS 池。
-
-这个方案用真实剩余 CPU 评分，不需要计算业务库 Running Devc 的 CPU 总量。
-
-### 2. BMS 选择
-
-沿用现有 Region 优先级，只改变同一 Region 内的选择依据：
+就采用：
 
 ```
-private NodePoolRegistry selectBmsPool(
-        DevcsEntity devc,
-        List<NodePoolRegistry> pools) {
-
-    List<String> regions =
-            SimplePoolScorer.parsePriorityRegions(devc.getRegion());
-
-    for (String region : regions) {
-        NodePoolRegistry pool = pools.stream()
-                .filter(p -> region.equals(p.getRegion()))
-                .filter(p -> bmsScore(p, devc) >= 0)
-                .max(Comparator.comparingLong(p -> bmsScore(p, devc)))
-                .orElse(null);
-
-        if (pool != null) {
-            return pool;
-        }
-    }
-
-    return null;
-}
+schedule:
+  pool-reserve:
+    bms-base-cores: 100
+    bms-per-node-cores: 2
+    ecs-reserve-ratio: 0.02
 ```
 
-这里不需要新增 `ThreadLocalRandom`。同分时暂时沿用 `.max()` 的确定性选择，避免额外改动。
+`schedule` 管调度，`pool-reserve` 管资源预留，BMS 和 ECS 各有独立参数。
 
-### 3. ECS 预留过滤
-
-```
-private List<NodePoolRegistry> filterEcsReserve(
-        List<NodePoolRegistry> pools) {
-
-    return pools.stream()
-            .filter(p -> {
-                int reserve = Math.max(1, (int) Math.ceil(
-                        p.getAllocatableNodes()
-                        * reserveConfig.ecsReserveRatio()
-                ));
-
-                return p.getAvailableNodes() > reserve;
-            })
-            .toList();
-}
-```
-
-采用总节点数计算固定保护目标，但仍使用真实 `AvailableNodes` 判断是否还能接纳新用户。
-
-### 4. 修改原有 select() 的普通池部分
-
-Security 分支不动，只修改普通 ECS 的最后选择：
-
-```
-filteredPools = filterEcsReserve(filteredPools);
-
-if (filteredPools.isEmpty()) {
-    throw new IllegalStateException("No available node pools");
-}
-
-return pickNodePoolRegistry(region, filteredPools);
-```
-
-### 5. 修改 Security Fallback
-
-```
-private NodePoolRegistry selectForSecurityContainer(
-        DevcsEntity devc,
-        List<NodePoolRegistry> pools,
-        List<NodePoolRegistry> allNodePools) {
-
-    NodePoolRegistry selected = selectBmsPool(devc, pools);
-
-    if (selected != null) {
-        return selected;
-    }
-
-    List<NodePoolRegistry> fallbackPools =
-            filterEcsReserve(
-                    fallbackToNormalContainer(devc, allNodePools));
-
-    if (fallbackPools.isEmpty()) {
-        throw new IllegalStateException(
-                "No available node pools for security container");
-    }
-
-    return pickNodePoolRegistry(devc.getRegion(), fallbackPools);
-}
-```
-
-`SimplePoolScorer` 整个类保持不变，ECS 继续按 `AvailableNodes` 加权随机。
-
-## 五、上线前我会特别确认的三件事
-
-第一，BMS 的总剩余量还没有出现在你当前快照中。 你现在给的是单节点最大剩余 CPU，不能推导整池剩余总量。所以 100 核只是合理的业务初始保护目标，上线后仍需观察新字段实际值。
-
-第二，你的数据有两处需要核对。 一条 Kuasar 记录写成 `4 4126750`，看起来字段可能粘连；另一条单节点剩余 `158730m`，高于你之前说的每台 152 核。建议确认数据格式和 Kubernetes Allocatable 的实际单位。
-
-第三，预留只用于新实例选池。 已经绑定池子的老用户恢复，不应该重新经过这道新用户预留过滤。否则保护措施可能反而阻碍老用户开机。
-
-## 六、最终改动规模
-
-| 模块                      | 修改                |
-| ----------------------- | ----------------- |
-| JSON 配置                 | 3 个参数             |
-| Common NodePool         | 新增 1 个字段          |
-| Agent                   | BMS 累加 CPU，ECS 不动 |
-| cluster-controller / DB | 保存新字段             |
-| PoolSelector            | BMS 改评分，ECS 加过滤   |
-| SimplePoolScorer        | 完全不动              |
-
-最终我会采用这版：BMS 100 核基础保护 + 每节点 2 核碎片预算；ECS 预留总节点数的 2%；两者共用三个 JSON 参数，但保留各自独立的调度策略。
-
-上线后主要观察 BMS 被过滤的数量、ECS 实际剩余节点和老用户恢复失败率。如果保护过度或不足，只调整 JSON，不需要重新设计 Scorer。
+这比新建顶级 `pool`、`scorer` 或 `resource` 更符合你当前项目的模块边界。

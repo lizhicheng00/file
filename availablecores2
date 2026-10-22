@@ -1,55 +1,49 @@
-我的建议是：BMS 不需要再增加 `ThreadLocalRandom`，CCE 继续保留原来的加权随机。两种池都预留资源，但不必使用同一个预留公式。
+最终按最小改动版来实现：
 
-为了尽量小改，我会把“预留”做成选池前的准入过滤，保留原来的 Region 优先级和 CCE 随机算法。
+- BMS / Kuasar：新增整池剩余 CPU 上报，按扣除预留后的余量选最大。
+- ECS / CCE：不改 Agent 上报，只增加预留节点过滤。
+- Security Fallback：BMS 没有合格池时，进入原来的 ECS 加权随机。
+- SimplePoolScorer 不修改，`ThreadLocalRandom` 继续用于 ECS，BMS 不需要新增随机逻辑。
 
-## 一、最终策略
+一共改 4 个位置：Common、Agent、cluster-controller/数据库、Java `PoolSelector`。
 
-| 类型                | 预留                           | 选池        |
-| ----------------- | ---------------------------- | --------- |
-| BMS / Kuasar      | `100 + 3 × AvailableNodes` 核 | 剩余 CPU 最大 |
-| CCE 普通池           | 固定预留一定 CPU（可配置）              | 原加权随机     |
-| Security Fallback | 同样检查 CCE 预留                  | 原加权随机     |
+## 1. Common：新增字段
 
-有一个必要修正：你之前给的 CCE 上报代码中：
-
-```
-if getReadyCondition(node.Status).Status == v1.ConditionTrue {
-    pool.AvailableNodes++
-}
-```
-
-这里的 `AvailableNodes` 实际上是 Ready 节点数量，不是真正的空闲节点数量。
-
-所以不能简单写：
-
-```
-availableNodes - 1
-```
-
-就认为已经预留了一台空闲机器。
-
-Kubernetes 判断能否调度 Pod，主要根据节点可分配资源和 Pod requests。
-
-[image](https://www.google.com/s2/favicons?domain=https://kubernetes.io\&sz=32)
-
-Kubernetes
-
-
-
-因此我建议 BMS 和 CCE 都上报 `SumAvailableCores`。只增加一个字段，其他数据尽量复用。
-
-## 二、Go 上报修改
-
-Common 增加：
+在 `NodePool` 实体中增加：
 
 ```
 SumAvailableCores uint64 `json:"sumAvailableCores" gorm:"column:sum_available_cores"`
 ```
 
-把原来的 `calculateBMSPoolResources` 改名成 `calculatePoolResources`，让 BMS 和 CCE 都能调用。
+单位沿用现有 CPU 数据：mCPU，1000m = 1 核。
+
+数据库增加一列：
 
 ```
-func (m *K8sDelegate) calculatePoolResources(
+ALTER TABLE t_node_pool_registry
+ADD COLUMN sum_available_cores BIGINT NOT NULL DEFAULT 0;
+```
+
+Java `NodePoolRegistry` 增加字段：
+
+```
+private Long sumAvailableCores;
+```
+
+保持与你们现有 ORM、JSON 映射风格一致，补齐 getter。如果是 JPA，可以加：
+
+```
+@Column(name = "sum_available_cores")
+```
+
+## 2. Agent：只修改 BMS 上报
+
+### calculateBMSPoolResources
+
+保留原来的最大单节点计算，只增加整个池 CPU 的累计。
+
+```
+func (m *K8sDelegate) calculateBMSPoolResources(
     pool *entity.NodePool,
     node v1.Node,
 ) {
@@ -61,11 +55,20 @@ func (m *K8sDelegate) calculatePoolResources(
         return
     }
 
-    availableCores := max(0, allocatableCores-int64(allocatedCores))
-    availableMemory := max(0, allocatableMemory-int64(allocatedMemory))
+    availableCores := allocatableCores - int64(allocatedCores)
+    availableMemory := allocatableMemory - int64(allocatedMemory)
 
+    if availableCores < 0 {
+        availableCores = 0
+    }
+    if availableMemory < 0 {
+        availableMemory = 0
+    }
+
+    // 新增：整池剩余 CPU
     pool.SumAvailableCores += uint64(availableCores)
 
+    // 原有：单节点最大剩余资源
     if availableCores > int64(pool.MaxAvailableCores) {
         pool.MaxAvailableCores = uint32(availableCores)
         pool.MaxAvailableMemory = uint32(availableMemory)
@@ -73,178 +76,106 @@ func (m *K8sDelegate) calculatePoolResources(
 }
 ```
 
-`buildNodePool()` 里保留原有分类，只修改调用：
+这里假设 `getNodeAllocatedResources()` 返回的 CPU 单位是 mCPU、内存单位是 MiB，且统计的是已经分配的 Pod requests。若与你们实际实现不一致，需要先统一口径。
+
+### buildNodePool
+
+ECS 分支完全不动。
+
+BMS 分支建议增加 Ready 判断，避免不可调度节点进入剩余 CPU 汇总：
 
 ```
 if labels[label.KuasarVMM] == "kuasar-vmm" {
     pool.Type = entity.NodeTypeSecurityContainer
+
+    if getReadyCondition(node.Status).Status == v1.ConditionTrue &&
+        !node.Spec.Unschedulable {
+        pool.AvailableNodes++
+        m.calculateBMSPoolResources(pool, node)
+    }
+} else {
+    // ECS 原有逻辑完全不动
+    if getReadyCondition(node.Status).Status == v1.ConditionTrue {
+        pool.AvailableNodes++
+    }
 }
-
-if getReadyCondition(node.Status).Status != v1.ConditionTrue ||
-    node.Spec.Unschedulable {
-    continue
-}
-
-pool.AvailableNodes++
-m.calculatePoolResources(pool, node)
 ```
 
-原来的独占 taint 排除逻辑继续保留。
+原有独占 taint 排除逻辑继续保留。
 
-这样 BMS、CCE 都上报整池 CPU 剩余量。
+注意： `SumAvailableCores` 是本轮构建 `nodePoolMap` 时累计的，不要跨上报周期累加。
 
-这里有一个性能注意事项：如果 `getNodeAllocatedResources()` 每次都会直接向 API Server 查询 Pod，那么 CCE 节点也调用后会增加请求量。上线前要看一下这个方法的实现；最好复用已有缓存或一次 Pod List，避免每节点重复查询。
+## 3. Java：PoolSelector 修改
 
-另外，上面代码假设 CPU 单位是 mCPU，内存单位是 MiB，Go 版本为 1.21+。
+这部分只增加 3 个小方法，修改原来的 2 个选择入口。
 
-## 三、Java 修改：BMS 不用 ThreadLocalRandom
-
-你原来的 BMS 逻辑是：
+### ① 增加预留常量
 
 ```
-.max(Comparator.comparingInt(
-        NodePoolRegistry::getMaxAvailableCores))
+private static final long BMS_BASE_RESERVE = 100_000L;
+private static final long BMS_NODE_RESERVE = 3_000L;
+private static final int ECS_RESERVED_NODES = 2;
 ```
 
-直接改成新评分即可。
+BMS 的 100 核、每节点 3 核按此前约定。ECS 暂以预留 2 个节点为例，实际值可以调整。
+
+### ② BMS 评分
 
 ```
 private long bmsScore(NodePoolRegistry pool, DevcsEntity devc) {
-    long request = (long) devc.getCores() * 1000;
-
-    long reserve = 100_000L
-            + 3_000L * pool.getAvailableNodes();
+    long request = (long) devc.getCores() * 1000L;
 
     if (pool.getAvailableNodes() <= 0
+            || pool.getSumAvailableCores() == null
             || pool.getMaxAvailableCores() < request) {
         return -1;
     }
 
-    long score = pool.getSumAvailableCores() - request - reserve;
+    long reserve = BMS_BASE_RESERVE
+            + BMS_NODE_RESERVE * pool.getAvailableNodes();
 
-    return score >= 0 ? score : -1;
+    return pool.getSumAvailableCores() - request - reserve;
 }
 ```
 
-在原来的 `selectByRegionPriority()` 中，只改池子选择部分：
+分数小于 0 表示不能给新用户继续分配。
+
+### ③ BMS 按 Region 优先级选最大分数
+
+替换原来的 `selectByRegionPriority()`：
 
 ```
-NodePoolRegistry pool = pools.stream()
-        .filter(p -> rgn.equals(p.getRegion()))
-        .filter(p -> bmsScore(p, devc) >= 0)
-        .max(Comparator.comparingLong(p -> bmsScore(p, devc)))
-        .orElse(null);
-```
+private NodePoolRegistry selectBmsPool(
+        DevcsEntity devc,
+        List<NodePoolRegistry> pools) {
 
-相应地，让 `selectByRegionPriority()` 接收 `devc` 参数，并在所有 Region 都没选中时返回 `null`，由上层触发 Fallback。
+    List<String> regions =
+            SimplePoolScorer.parsePriorityRegions(devc.getRegion());
 
-不需要新增 `ThreadLocalRandom`。
+    if (regions.isEmpty()) {
+        throw new IllegalStateException("Priority regions are empty");
+    }
 
-BMS 相同评分时先使用 `.max()` 的默认选择即可。它不保证同分池均匀分配，但实现简单；如果观察到同分池长期偏斜，再补随机打散。
+    for (String region : regions) {
+        NodePoolRegistry pool = pools.stream()
+                .filter(p -> region.equals(p.getRegion()))
+                .filter(p -> bmsScore(p, devc) >= 0)
+                .max(Comparator.comparingLong(
+                        p -> bmsScore(p, devc)))
+                .orElse(null);
 
-## 四、CCE 保留原加权随机，只新增预留检查
+        if (pool != null) {
+            return pool;
+        }
+    }
 
-CCE 的预留我建议先设置为一个可配置的 CPU 保护额度，例如按常见开发实例的规格确定，而不是直接套 BMS 的 100 核保护线。
-
-```
-private static final long CCE_RESERVED_CPU = 16_000L;
-```
-
-这里的 16 核只是示例，实际应根据 CCE 池规模与希望保护的恢复实例规格确定。
-
-新增方法：
-
-```
-private List<NodePoolRegistry> filterCceReserve(
-        List<NodePoolRegistry> pools,
-        DevcsEntity devc) {
-
-    long request = (long) devc.getCores() * 1000;
-
-    return pools.stream()
-            .filter(p -> p.getSumAvailableCores()
-                    >= request + CCE_RESERVED_CPU)
-            .toList();
+    return null;
 }
 ```
 
-然后普通 CCE 选择前：
+BMS 不加 `ThreadLocalRandom`。 同分时先使用 `.max()` 的默认选择，减少改动。
 
-```
-filteredPools = filterCceReserve(filteredPools, devc);
-
-if (filteredPools.isEmpty()) {
-    throw new IllegalStateException("No available CCE pools");
-}
-
-return pickNodePoolRegistry(region, filteredPools);
-```
-
-Security Fallback 同样应用：
-
-```
-List<NodePoolRegistry> fallbackPools =
-        filterCceReserve(
-                fallbackToNormalContainer(devc, allNodePools),
-                devc);
-
-if (fallbackPools.isEmpty()) {
-    throw new IllegalStateException("No available fallback pools");
-}
-
-return pickNodePoolRegistry(devc.getRegion(), fallbackPools);
-```
-
-原来 `SimplePoolScorer` 里的：
-
-```
-ThreadLocalRandom.current().nextLong(totalAvailable)
-```
-
-继续保留。 它负责 CCE 的加权随机，不需要修改。
-
-注意：这里默认 CCE 的预留用于保护已绑定用户恢复。因此已绑定池的老用户重新开机，应走原池恢复路径，不应用这道针对新分配的预留门槛。
-
-## 五、最终改动范围
-
-| 位置                 | 修改                     |
-| ------------------ | ---------------------- |
-| Common NodePool    | 增加 `SumAvailableCores` |
-| Agent              | BMS、CCE 都汇总剩余 CPU      |
-| cluster-controller | 新增字段持久化                |
-| Java PoolSelector  | BMS 新评分 + CCE 预留过滤     |
-| SimplePoolScorer   | 不修改                    |
-
-还有两点不能忽略：BMS 因预留不足导致所有候选被过滤时，仍需进入 CCE Fallback；新上报字段必须先贯通数据库和消息链路，再启用 Scorer。
-
-同时，周期性上报存在延迟，CPU 总余量也无法完全反映单节点碎片。因此这是改善选池成功率的软预留方案，不是强制锁定资源。
-
-最终我推荐这版：只新增一个上报字段，BMS 改评分、CCE 加过滤，原有随机算法完全不动。 这样改动集中，后续维护也比较简单。
-
-
-
-
-明白，那就更简单了。ECS 的 `AvailableNodes` 已经是真实可分配节点数，不需要新增任何上报字段，也不需要修改 Agent 的 ECS 逻辑。
-
-之前建议给 ECS 也增加 `SumAvailableCores`，这部分取消。
-
-## 最终方案
-
-| 类型                | 数据来源                   | 预留策略                         | 选池方式      |
-| ----------------- | ---------------------- | ---------------------------- | --------- |
-| BMS / Kuasar      | 新增 `SumAvailableCores` | `100 + 3 × AvailableNodes` 核 | 剩余 CPU 最大 |
-| ECS / CCE         | 原有 `AvailableNodes`    | 预留 N 个节点                     | 原来的加权随机   |
-| Security Fallback | 原有 ECS 数据              | 同样预留 N 个节点                   | 原来的加权随机   |
-
-## 1. ECS 只增加一道过滤
-
-例如预留 2 个节点：
-
-```
-private static final int ECS_RESERVED_NODES = 2;
-```
-
-增加方法：
+### ④ ECS 预留过滤
 
 ```
 private List<NodePoolRegistry> filterEcsReserve(
@@ -256,106 +187,130 @@ private List<NodePoolRegistry> filterEcsReserve(
 }
 ```
 
-为什么是 `>`？
+这里假设每个新实例消耗一个 ECS 可用节点。
 
-假设预留 2 个节点，且每个新实例消耗一个可用节点：
+### ⑤ 修改 selectForSecurityContainer()
 
-- 3 个可用：可以分配一个，剩下 2 个。
-- 2 个可用：不再分配新用户。
-- 1 个可用：不再分配新用户。
-
-这里的 2 是示例配置值，可以按业务需要调整。
-
-## 2. 原有 ECS 选择逻辑不改
-
-普通容器：
+BMS 没有合格资源时，继续走原来的 ECS Fallback。
 
 ```
-filteredPools = filterEcsReserve(filteredPools);
+private NodePoolRegistry selectForSecurityContainer(
+        DevcsEntity devc,
+        List<NodePoolRegistry> pools,
+        List<NodePoolRegistry> allNodePools) {
+
+    NodePoolRegistry selected = selectBmsPool(devc, pools);
+
+    if (selected != null) {
+        return selected;
+    }
+
+    List<NodePoolRegistry> fallbackPools =
+            filterEcsReserve(
+                    fallbackToNormalContainer(devc, allNodePools));
+
+    if (fallbackPools.isEmpty()) {
+        throw new IllegalStateException(
+                "No available node pools for security container");
+    }
+
+    return pickNodePoolRegistry(devc.getRegion(), fallbackPools);
+}
+```
+
+### ⑥ 修改普通 ECS 的 select()
+
+原来：
+
+```
+if (filteredPools.isEmpty()) {
+    throw new IllegalStateException("No available node pools");
+}
 
 return pickNodePoolRegistry(region, filteredPools);
 ```
 
-记得保留原有的空列表检查。
-
-Security Fallback：
+改成：
 
 ```
-List<NodePoolRegistry> fallbackPools =
-        filterEcsReserve(
-                fallbackToNormalContainer(devc, allNodePools));
+filteredPools = filterEcsReserve(filteredPools);
 
-if (fallbackPools.isEmpty()) {
-    throw new IllegalStateException("No available fallback pools");
+if (filteredPools.isEmpty()) {
+    throw new IllegalStateException("No available node pools");
 }
 
-return pickNodePoolRegistry(devc.getRegion(), fallbackPools);
+return pickNodePoolRegistry(region, filteredPools);
 ```
 
-`SimplePoolScorer` 完全不用改，原来的：
+前面的 `SECURITY_CONTAINER` 分支保持原样，仍调用 `selectForSecurityContainer()`。
+
+`SimplePoolScorer` 整个类不用修改，包括原有的：
 
 ```
-ThreadLocalRandom.current().nextLong(totalAvailable)
+ThreadLocalRandom.current().nextLong(totalAvailable);
 ```
 
-继续保留。
+ECS 仍按原始 `AvailableNodes` 进行加权随机，只是候选池要先通过预留检查。
 
-注意，ECS 这里仅增加预留过滤，过滤后的候选仍按原始 `AvailableNodes` 加权随机，不需要再计算新权重。
+## 4. cluster-controller：持久化新字段
 
-## 3. BMS 保持之前的方案
+确保最新版 Common 的 `NodePool` 可以反序列化 `sumAvailableCores`。
 
-Agent 只给 BMS 增加：
+如果 `saveNodePool` 使用 GORM 结构体完整插入或更新，只需要确认字段已映射。
 
-```
-pool.SumAvailableCores += uint64(availableCores)
-```
-
-Java BMS Scorer：
+如果使用手写 SQL 或显式 `Select` / `Updates`，还需要把：
 
 ```
-long reserve =
-        100_000L + 3_000L * pool.getAvailableNodes();
-
-long score =
-        pool.getSumAvailableCores() - requestCpuMilli - reserve;
+sum_available_cores
 ```
 
-同时保留 `MaxAvailableCores` 单节点可容纳性检查、Region 优先级和原有内存等过滤条件。
+加入插入和更新字段。
 
-BMS 选最大 Score，不需要 `ThreadLocalRandom`。同分暂时采用原有流顺序即可。
+特别要检查 Upsert 更新已有 NodePool 记录时也会更新该列，否则可能一直读到默认值 0。
 
-如果所有 BMS 候选因预留不足被过滤，仍要触发 ECS Fallback。
+## 5. 最终验收
 
-## 最终改动范围
+上线前检查这些场景即可：
 
-Common / NodePool
+| 场景                | 预期                      |
+| ----------------- | ----------------------- |
+| BMS 多个池满足预留       | 选择同 Region 内 Score 最大的池 |
+| BMS 全部低于预留        | 进入 ECS Fallback         |
+| ECS 剩余 3 节点，预留 2  | 可参与随机                   |
+| ECS 剩余 2 节点，预留 2  | 不参与新分配                  |
+| ECS Fallback 全部不足 | 返回无可用池                  |
+| 老用户恢复已绑定池         | 不执行首次选池的预留过滤            |
 
-新增 1 个字段
+最后一项尤其重要：确认 `PoolSelector.select()` 只负责新实例分配，或者在调用层保证已绑定池的老用户启动不经过预留筛选。
 
-`SumAvailableCores`
+建议发布顺序：
 
-cluster-agent
+`数据库 → cluster-controller → cluster-agent → Java 调度服务`
 
-BMS 累加 CPU
+先确认 BMS 的 `sum_available_cores` 已有真实数据，再启用新的 Scorer。
 
-ECS 原样不动。
+### 最终修改范围
 
-cluster-controller / DB
+Common / DB
 
-保存新字段
+新增一个字段、一列
+
+Agent
+
+BMS 新增一次累加
+
+cluster-controller
+
+接收和保存新增字段
 
 PoolSelector
 
-修改两处策略
-
-BMS 改 Score，ECS 增加预留过滤。
+3 个方法 + 2 处调用调整
 
 SimplePoolScorer
 
-不修改
+完全不动
 
-我的最终取舍是：BMS 按 CPU 预留，ECS 按节点数预留；各自使用已有最可靠的指标，不强行统一模型。
+这版我认为可以定下来。它不引入额外服务，也不增加 Devc 数据库查询。
 
-只有一个前提：ECS 每次新分配确实消耗一个 `AvailableNodes`，且这个值会及时下降。老用户恢复时应绕过针对新分配的预留过滤，否则预留机制会反过来阻碍恢复。
-
-这样改动更少，含义也更清楚。
+剩下的限制主要来自资源上报周期、并发分配和节点碎片化，因此 100 核及 ECS 2 节点都属于调度侧的软预留，不是资源锁定。先用这套逻辑运行并观察 BMS Fallback 率、资源耗尽类调度失败率，再决定是否值得进一步优化。

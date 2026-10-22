@@ -1,0 +1,148 @@
+对，上一版我确实改多了。你原来的代码已经有完整的节点遍历、资源计算、Region 优先级和 Fallback 逻辑，没有必要重新组织这些代码。
+
+我建议收敛成 3 处修改，其余全部保留。
+
+## 1. Common：只增加一个字段
+
+```
+SumAvailableCores uint64 `json:"sumAvailableCores" gorm:"column:sum_available_cores"`
+```
+
+数据库增加：
+
+```
+ALTER TABLE t_node_pool_registry
+ADD COLUMN sum_available_cores BIGINT NOT NULL DEFAULT 0;
+```
+
+Controller 的消息解析、批量落库以及 Java 的 `NodePoolRegistry` 也同步增加这个字段，确保上报值能传到 Scorer。
+
+不加 TotalCPU、SumMemory 等暂时用不上的字段。
+
+## 2. Agent：只在原函数里累加 CPU
+
+`buildNodePool()` 一行不改。
+
+原来的 `calculateBMSPoolResources()` 保留，只增加一行：
+
+```
+availableCores := allocatableCores - allocatedCores
+availableMemory := allocatableMemory - allocatedMemory
+
+// 新增
+pool.SumAvailableCores += uint64(availableCores)
+
+if availableCores > pool.MaxAvailableCores {
+    pool.MaxAvailableCores = availableCores
+    pool.MaxAvailableMemory = availableMemory
+}
+```
+
+这样不增加 Kubernetes 查询，不改变原有 `MaxAvailableCores` 的计算逻辑。
+
+唯一需要检查：如果当前 CPU 用的是 `uint32`，且 `allocatedCores` 可能超过 `allocatableCores`，原有减法会下溢。这种情况要对减法做非负保护，不能直接累加错误结果。
+
+## 3. Java：只修改 BMS 的过滤和比较
+
+### A. 原有 `selectForSecurityContainer()` 增加过滤
+
+在原来的：
+
+```
+boolean isFallback = false;
+```
+
+之前增加：
+
+```
+long requestCpu = (long) devc.getCores() * 1000L;
+
+pools = pools.stream()
+        .filter(p -> p.getAvailableNodes() > 0)
+        .filter(p -> p.getMaxAvailableCores() >= requestCpu)
+        .filter(p -> p.getSumAvailableCores()
+                >= requestCpu
+                + 100_000L
+                + 3_000L * p.getAvailableNodes())
+        .toList();
+```
+
+`devc.getCores()` 这里假设单位为 CPU 核，和 Agent 上报的 mCPU 对齐。
+
+后面的原有代码不需要修改：
+
+```
+boolean isFallback = false;
+
+if (pools.isEmpty()) {
+    pools = fallbackToNormalContainer(devc, allNodePools);
+    isFallback = true;
+}
+
+if (pools.isEmpty()) {
+    throw new IllegalStateException(
+            "No available node pools for security container");
+}
+
+String region = devc.getRegion();
+
+return isFallback
+        ? pickNodePoolRegistry(region, pools)
+        : selectByRegionPriority(region, pools);
+```
+
+这就自然解决了 BMS 预留不足时的 Fallback 问题。
+
+### B. 原有 `selectByRegionPriority()` 只替换比较器
+
+原代码：
+
+```
+.max(Comparator.comparingInt(
+        NodePoolRegistry::getMaxAvailableCores))
+```
+
+改成：
+
+```
+.max(Comparator.comparingLong(p ->
+        p.getSumAvailableCores()
+                - 3_000L * p.getAvailableNodes()))
+```
+
+为什么只减 `3 × AvailableNodes`？
+
+因为前面的过滤已经确保：
+
+\\[ SumAvailableCores \ge RequestCPU + 100000 + 3000N \\]
+
+在同一次请求中，`RequestCPU` 和基础预留 `100000` 对所有池都相同，不影响排序。
+
+因此比较：
+
+\\[ SumAvailableCores-3000N \\]
+
+和比较完整的剩余 Score，结果一致。
+
+同分继续保留原 `.max()` 的行为，不额外增加随机代码。
+
+## 最终修改范围
+
+| 位置                                  | 修改内容                      |
+| ----------------------------------- | ------------------------- |
+| Common / DB / Java Entity           | 新增 `SumAvailableCores` 字段 |
+| Agent `calculateBMSPoolResources()` | 累加 CPU 余量                 |
+| `selectForSecurityContainer()`      | 加预留条件过滤                   |
+| `selectByRegionPriority()`          | 替换比较器                     |
+| `buildNodePool()`                   | 不改                        |
+| `SimplePoolScorer`                  | 不改                        |
+| CCE 加权随机                            | 不改                        |
+| Security Fallback                   | 保留                        |
+
+这才是我建议你实际提交的版本。
+
+不引入新的 Scorer 类，不改原有函数签名，不增加额外查询，不改变 CCE 行为。
+
+上线前只需要验证新增字段已经完成落库和读取、CPU 单位一致，以及 BMS 被预留规则过滤后能正常 Fallback。
+
+另外明确一点：`100 + 3 × AvailableNodes` 是每个 BMS 池的软保护线，不是真正锁定的资源。它可以减少新用户占用紧张池的机会，但无法保证并发开机时老用户一定成功恢复。

@@ -1,94 +1,18 @@
-建议直接沿用 `schedule` 前缀，不新开顶级配置。
+import lombok.Data;
+import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.stereotype.Component;
 
-因为这三个参数都属于资源池调度策略，不属于 CCE 资源管理、计量或其他模块。
+@Data
+@Component
+@ConfigurationProperties(prefix = "schedule.pool-reserve")
+public class PoolReserveProperties {
 
-而且 `schedule` 已经存在，放在它下面最自然。
+    /** BMS 基础预留 CPU（核） */
+    private long bmsBaseCores = 100;
 
-## 1. application.yaml
+    /** BMS 每节点碎片预留 CPU（核） */
+    private long bmsPerNodeCores = 2;
 
-推荐这样配置：
-
-```
-schedule:
-  pool-reserve:
-    bms-base-cores: 100
-    bms-per-node-cores: 2
-    ecs-reserve-ratio: 0.02
-```
-
-三个配置分别表示：
-
-| 参数                   | 含义            | 默认值   |
-| -------------------- | ------------- | ----- |
-| `bms-base-cores`     | BMS 基础 CPU 预留 | 100 核 |
-| `bms-per-node-cores` | BMS 每节点碎片预算   | 2 核   |
-| `ecs-reserve-ratio`  | ECS 总节点数预留比例  | 2%    |
-
-这样层级很明确：
-
-```
-schedule
-  └── pool-reserve
-        ├── bms-base-cores
-        ├── bms-per-node-cores
-        └── ecs-reserve-ratio
-```
-
-## 2. Java 读取配置
-
-如果现在只使用三个参数，为了最小改动，直接在 `PoolSelector` 中注入即可：
-
-```
-@Value("${schedule.pool-reserve.bms-base-cores:100}")
-private long bmsBaseCores;
-
-@Value("${schedule.pool-reserve.bms-per-node-cores:2}")
-private long bmsPerNodeCores;
-
-@Value("${schedule.pool-reserve.ecs-reserve-ratio:0.02}")
-private double ecsReserveRatio;
-```
-
-这里要求 `PoolSelector` 是由 Spring 管理的 Bean，否则 `@Value` 不会生效。
-
-### BMS 计算
-
-```
-long reserve = (bmsBaseCores
-        + bmsPerNodeCores * pool.getAvailableNodes()) * 1000L;
-```
-
-### ECS 计算
-
-```
-int reserve = Math.max(1,
-        (int) Math.ceil(pool.getAllocatableNodes() * ecsReserveRatio));
-```
-
-其他 Scorer 逻辑不需要改。
-
-## 3. 要不要建新的配置类？
-
-我的建议是：
-
-- 如果项目已经有 `ScheduleProperties` 或 `ScheduleConfig`：直接复用现有配置类，增加三个字段。
-- 如果没有：目前三个简单参数，直接用 `@Value` 就够了，不需要专门新建配置类。
-- 如果以后调度参数明显增加，再考虑统一用 `@ConfigurationProperties` 管理。
-
-这样避免为三个参数增加额外结构。
-
-## 最终建议
-
-就采用：
-
-```
-schedule:
-  pool-reserve:
-    bms-base-cores: 100
-    bms-per-node-cores: 2
-    ecs-reserve-ratio: 0.02
-```
-
-`schedule` 管调度，`pool-reserve` 管资源预留，BMS 和 ECS 各有独立参数。
-
-这比新建顶级 `pool`、`scorer` 或 `resource` 更符合你当前项目的模块边界。
+    /** ECS 预留节点比例 */
+    private double ecsReserveRatio = 0.02;
+}

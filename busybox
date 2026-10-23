@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: cpu-test
+spec:
+  nodeName: "172.20.2.122"
+  containers:
+    - name: cpu-test
+      image: busybox:1.36
+      command: ["sh", "-c", "yes > /dev/null"]
+      resources:
+        requests:
+          cpu: "1"
+          memory: 1Gi
+        limits:
+          cpu: "1"
+          memory: 1Gi

@@ -105,3 +105,27 @@
 `block.md` 中供积分和封禁使用的 ClickHouse `sandbox_logs` 属于下游账本，与本期 MySQL 同名表职责不同。其表契约、唯一写入方和额度检查由计费接入单独对齐。
 
 验收以同一沙箱完成一次创建、暂停、恢复和销毁为准：MySQL 对应两段执行，ClickHouse 对应四个不同的生命周期事件；另验证异常重启能按最后观测补报，重试不会重复计算用量。
+
+
+CREATE TABLE `sandbox_logs` (
+  `execution_id` varchar(64) NOT NULL,
+  `sandbox_id` varchar(64) NOT NULL,
+  `namespace` varchar(64) NOT NULL,
+  `team_id` varchar(64) NOT NULL,
+  `node_id` varchar(128) NOT NULL,
+  `template_id` varchar(64) NOT NULL,
+  `vcpu` bigint NOT NULL,
+  `ram_mb` bigint NOT NULL,
+  `disk_mb` bigint NOT NULL,
+  `started_at` datetime(6) NOT NULL,
+  `observed_at` datetime(6) NOT NULL,
+  `stopped_at` datetime(6) DEFAULT NULL,
+  `stop_reason` varchar(64) NOT NULL DEFAULT '',
+  `revision` bigint unsigned NOT NULL,
+  `created_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  `updated_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (`execution_id`),
+  KEY `idx_usage_team_time` (`team_id`,`started_at`),
+  KEY `idx_usage_namespace_time` (`namespace`,`started_at`),
+  KEY `idx_usage_sandbox_time` (`sandbox_id`,`started_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;

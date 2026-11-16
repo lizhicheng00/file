@@ -1,0 +1,14 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>DevBox 验收记录</title>
+<style>body{margin:32px;font:17px/1.5 system-ui,sans-serif;color:#172034}h1{font-size:30px}table{border-collapse:collapse;width:100%}td,th{padding:10px 14px;text-align:left;border-bottom:1px solid #dce1e9}th{background:#edf2f6}td:first-child{white-space:nowrap}code{color:#145d4d}</style>
+<h1>DevBox 测试环境验收 · 2026-11-16</h1>
+<p>依据实际请求和 SDK 输出整理。SDK 使用本地新版；不是线上 SDK 发包证明。</p>
+<table><tr><th>项</th><th>状态和修改</th><th>实测证据</th></tr>
+<tr><td>1 命令超时</td><td>已修复：Python 到期限且无退出状态时返回超时异常</td><td><code>sleep 3, timeout=1 → RequestTimeoutError: command timed out</code></td></tr>
+<tr><td>2 暂停截止时间</td><td>按约保留：endAt 是上次运行截止时间，不代表快照过期</td><td><code>PAUSED; before == after → True</code></td></tr>
+<tr><td>3 SIGKILL 后列表</td><td>已修复：JS 将省略的 processes 当作空数组</td><td><code>JS [] / Python ()</code></td></tr>
+<tr><td>4 连接诊断</td><td>Python 已实测；JS 同步保留底层原因，未在线注入故障</td><td><code>ConnectError: SSL UNEXPECTED_EOF_WHILE_READING</code></td></tr>
+<tr><td>5 EnvD 地址</td><td>已修复：公开 envd_url / envdUrl，补 SDK 文档</td><td>两端均读到 <code>https://…-49983.devbox-s2.hwtunnel.com</code></td></tr>
+<tr><td>6 短时长创建</td><td>已修复：Manager 先校验，最短 10 秒</td><td><code>1、5、9 → 400 invalid_timeout；10 → 201</code></td></tr>
+<tr><td>7 显式 0</td><td>已修复：不再将 0 当作省略</td><td><code>0 → 400 invalid_timeout；省略 → 201，300s</code></td></tr>
+<tr><td>8 时长契约</td><td>统一 Manager、SDK、OpenAPI 为 10–86400 秒</td><td><code>connect / resume / timeout / refreshes</code> 对 0、5、86401 均返回 400</td></tr>
+</table><p>测试沙箱已删除。Python 后台句柄退出时出现一次流清理警告，未列为本轮已修复。</p>

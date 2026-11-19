@@ -1,0 +1,148 @@
+# 生产首发。替换命名空间、镜像完整引用及 Secret 名称，核对后把 replicas 从 0 调为 1。
+# 镜像建议填写生产 SWR 的应用镜像 digest，节点选择器须匹配该镜像。模板当前按 amd64。
+# default-secret 参考测试 CCE，须在目标命名空间确认；若生产使用其他拉取 Secret，请替换。
+# 启动时执行 MySQL 迁移。MYSQL_PASSWORD、启用认证时的 REDIS_PASSWORD 使用应用可解密的密文。
+# OMEGA、WORK_KEY 和 beta 使用匹配的一套生产材料。Redis 无认证时仍需存在 REDIS_PASSWORD 键，可为空。
+# Secret 文件权限以十进制 288 表示八进制 0440，经 fsGroup 65532 供服务读取。
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  namespace: replace-prod-namespace
+  name: devbox-service
+spec:
+  replicas: 0
+  selector:
+    matchLabels:
+      app: devbox-service
+  template:
+    metadata:
+      labels:
+        app: devbox-service
+    spec:
+      nodeSelector:
+        kubernetes.io/arch: amd64
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 180
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      imagePullSecrets:
+      - name: default-secret
+      containers:
+      - name: devbox-service
+        image: REPLACE_PROD_SWR_IMAGE
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+        envFrom:
+        - configMapRef:
+            name: devbox-service-config
+        env:
+        - name: MYSQL_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: devbox-service-credentials
+              key: MYSQL_PASSWORD
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: devbox-service-credentials
+              key: REDIS_PASSWORD
+        - name: OMEGA
+          valueFrom:
+            secretKeyRef:
+              name: devbox-service-credentials
+              key: OMEGA
+        - name: WORK_KEY
+          valueFrom:
+            secretKeyRef:
+              name: devbox-service-credentials
+              key: WORK_KEY
+        ports:
+        - name: public-https
+          containerPort: 8080
+        - name: gateway-grpc
+          containerPort: 8445
+        startupProbe:
+          tcpSocket:
+            port: gateway-grpc
+          periodSeconds: 5
+          failureThreshold: 132
+        readinessProbe:
+          tcpSocket:
+            port: gateway-grpc
+          periodSeconds: 5
+        resources:
+          requests:
+            cpu: 500m
+            memory: 512Mi
+          limits:
+            cpu: '2'
+            memory: 2Gi
+        volumeMounts:
+        - name: crypto-beta
+          mountPath: /opt/cloud/dog
+          readOnly: true
+        - name: nomad-client-tls
+          mountPath: /etc/nomad/tls
+          readOnly: true
+        - name: server-tls
+          mountPath: /etc/devbox/tls
+          readOnly: true
+        - name: gateway-ca
+          mountPath: /etc/devbox/gateway
+          readOnly: true
+        - name: relay-client-tls
+          mountPath: /etc/relay/tls
+          readOnly: true
+      volumes:
+      - name: crypto-beta
+        secret:
+          secretName: devbox-service-beta
+          defaultMode: 288
+          items:
+          - key: beta
+            path: beta
+      - name: nomad-client-tls
+        secret:
+          secretName: devbox-service-nomad-certs
+          defaultMode: 288
+          items:
+          - key: ca.pem
+            path: ca.pem
+          - key: client-cert.pem
+            path: client-cert.pem
+          - key: client-key.pem
+            path: client-key.pem
+      - name: server-tls
+        secret:
+          secretName: devbox-service-server-tls
+          defaultMode: 288
+          items:
+          - key: tls.crt
+            path: server.crt
+          - key: tls.key
+            path: server.key
+      - name: gateway-ca
+        secret:
+          secretName: devbox-service-gateway-ca
+          defaultMode: 288
+          items:
+          - key: ca.pem
+            path: ca.pem
+      - name: relay-client-tls
+        secret:
+          secretName: devbox-service-relay-client-tls
+          defaultMode: 288
+          items:
+          - key: tls.crt
+            path: client.crt
+          - key: tls.key
+            path: client.key

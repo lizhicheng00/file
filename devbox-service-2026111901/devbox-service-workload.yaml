@@ -1,0 +1,136 @@
+# DevBox Service CCE 工作负载。
+# 三个对象使用同一命名空间，填写 REPLACE_* 并核对现有 Secret 的名称及键。
+# image 使用本次 amd64 镜像包内的 SWR 标签。请对照目标环境的 SWR 地址与节点架构。
+# 配置核对后，将 Deployment 的 replicas 从 0 调为 1。启动时会执行 MySQL 迁移。
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  namespace: REPLACE_PROD_NAMESPACE
+  name: devbox-service-config
+data:
+  MYSQL_HOST: "REPLACE_PROD_MYSQL_HOST"
+  MYSQL_PORT: "3306"
+  MYSQL_DATABASE: "REPLACE_PROD_MYSQL_DATABASE"
+  MYSQL_USER: "REPLACE_PROD_MYSQL_USER"
+  REDIS_HOST: "REPLACE_PROD_REDIS_HOST"
+  REDIS_PORT: "6379"
+  NOMAD_ADDRESS: "https://REPLACE_PROD_NOMAD_HOST:4646"
+  MGMT_SERVICE_GRPC_TARGET: "REPLACE_PROD_MGMT_GRPC_HOST:8448"
+  MGMT_SERVICE_SERVER_NAME: "REPLACE_MGMT_CERT_SAN"
+  RELAY_CONTROLLER_GRPC_TARGET: "REPLACE_PROD_RELAY_GRPC_HOST:REPLACE_PORT"
+  RELAY_CONTROLLER_SERVER_NAME: "REPLACE_RELAY_CERT_SAN"
+  SANDBOX_PROXY_DOMAIN: "REPLACE_PROD_GATEWAY_DOMAIN"
+  CLIENT_CA_CERT_PATH: "/etc/devbox/client/ca.pem"
+  CLIENT_CERT_PATH: "/etc/devbox/client/tls.crt"
+  CLIENT_KEY_PATH: "/etc/devbox/client/tls.key"
+  GATEWAY_CLIENT_CA_PATH: "/etc/devbox/gateway/ca.pem"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  namespace: REPLACE_PROD_NAMESPACE
+  name: devbox-service
+spec:
+  replicas: 0
+  selector:
+    matchLabels:
+      app: devbox-service
+  template:
+    metadata:
+      labels:
+        app: devbox-service
+    spec:
+      nodeSelector:
+        kubernetes.io/arch: amd64
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 180
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      imagePullSecrets:
+        - name: devbox-service-swr
+      containers:
+        - name: devbox-service
+          image: swr.cn-south-1.myhuaweicloud.com/cloud_devbox/devbox-service:1.0.0-2026111901.amd64
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          envFrom:
+            - configMapRef:
+                name: devbox-service-config
+          env:
+            - name: MYSQL_PASSWORD
+              valueFrom:
+                secretKeyRef: {name: devbox-service-credentials, key: MYSQL_PASSWORD}
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef: {name: devbox-service-credentials, key: REDIS_PASSWORD}
+            - name: OMEGA
+              valueFrom:
+                secretKeyRef: {name: devbox-service-credentials, key: OMEGA}
+            - name: WORK_KEY
+              valueFrom:
+                secretKeyRef: {name: devbox-service-credentials, key: WORK_KEY}
+          ports:
+            - {name: public-https, containerPort: 8080}
+            - {name: gateway-grpc, containerPort: 8445}
+          startupProbe:
+            tcpSocket: {port: gateway-grpc}
+            periodSeconds: 5
+            failureThreshold: 132
+          readinessProbe:
+            tcpSocket: {port: gateway-grpc}
+            periodSeconds: 5
+          resources:
+            requests: {cpu: 500m, memory: 512Mi}
+            limits: {cpu: "2", memory: 2Gi}
+          volumeMounts:
+            - {name: crypto-beta, mountPath: /opt/cloud/dog, readOnly: true}
+            - {name: client-tls, mountPath: /etc/devbox/client, readOnly: true}
+            - {name: server-tls, mountPath: /etc/devbox/tls, readOnly: true}
+            - {name: gateway-ca, mountPath: /etc/devbox/gateway, readOnly: true}
+      volumes:
+        - name: crypto-beta
+          secret:
+            secretName: devbox-service-beta
+            defaultMode: 0440
+            items: [{key: beta, path: beta}]
+        - name: client-tls
+          secret:
+            secretName: devbox-service-client-tls
+            defaultMode: 0440
+            items:
+              - {key: ca.pem, path: ca.pem}
+              - {key: tls.crt, path: tls.crt}
+              - {key: tls.key, path: tls.key}
+        - name: server-tls
+          secret:
+            secretName: devbox-service-server-tls
+            defaultMode: 0440
+            items:
+              - {key: tls.crt, path: server.crt}
+              - {key: tls.key, path: server.key}
+        - name: gateway-ca
+          secret:
+            secretName: devbox-service-gateway-ca
+            defaultMode: 0440
+            items: [{key: ca.pem, path: ca.pem}]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  namespace: REPLACE_PROD_NAMESPACE
+  name: devbox-service
+spec:
+  type: ClusterIP
+  selector:
+    app: devbox-service
+  ports:
+    - {name: public-https, port: 8080, targetPort: public-https}
+    - {name: gateway-grpc, port: 8445, targetPort: gateway-grpc}

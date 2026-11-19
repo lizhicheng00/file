@@ -1,10 +1,7 @@
-# devbox-secret 的键见 00-devbox-secret.yaml.example。
-# 生产首发。替换命名空间、镜像完整引用及 Secret 名称，核对后把 replicas 从 0 调为 1。
-# 镜像建议填写生产 SWR 的应用镜像 digest，节点选择器须匹配该镜像。模板当前按 amd64。
-# default-secret 参考测试 CCE，须在目标命名空间确认；若生产使用其他拉取 Secret，请替换。
-# 启动时执行 MySQL 迁移。MYSQL_PASSWORD、启用认证时的 REDIS_PASSWORD 使用应用可解密的密文。
-# OMEGA、WORK_KEY 和 beta 使用匹配的一套生产材料。Redis 无认证时仍需存在 REDIS_PASSWORD 键，可为空。
-# Secret 文件权限以十进制 288 表示八进制 0440，经 fsGroup 65532 供服务读取。
+# 填同一生产命名空间、生产 SWR 镜像和 env 中的 REPLACE_*。已有 devbox-secret 提供数据库配置和解密材料。
+# 核对 default-secret 和各证书 Secret 的名称及键。beta 从 devbox-secret 挂载到 /opt/cloud/dog/beta。
+# 模板使用 amd64，按实际镜像和节点调整。生产库和凭据核验后把 replicas 调为 1。启动会执行 MySQL 迁移。
+# Nomad/Mgmt/Relay 使用同一 CA 信任包。Relay 如共用默认客户端身份，移除两个 RELAY_CONTROLLER_CLIENT_* 环境变量与对应挂载。
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -42,15 +39,42 @@ spec:
           capabilities:
             drop:
             - ALL
-        envFrom:
-        - configMapRef:
-            name: devbox-service-config
         env:
+        - name: MYSQL_HOST
+          valueFrom:
+            secretKeyRef:
+              name: devbox-secret
+              key: MYSQL_HOST
+        - name: MYSQL_PORT
+          valueFrom:
+            secretKeyRef:
+              name: devbox-secret
+              key: MYSQL_PORT
+        - name: MYSQL_DATABASE
+          valueFrom:
+            secretKeyRef:
+              name: devbox-secret
+              key: MYSQL_DATABASE
+        - name: MYSQL_USER
+          valueFrom:
+            secretKeyRef:
+              name: devbox-secret
+              key: MYSQL_USER
         - name: MYSQL_PASSWORD
           valueFrom:
             secretKeyRef:
               name: devbox-secret
               key: MYSQL_PASSWORD
+        - name: REDIS_HOST
+          valueFrom:
+            secretKeyRef:
+              name: devbox-secret
+              key: REDIS_HOST
+        - name: REDIS_PORT
+          valueFrom:
+            secretKeyRef:
+              name: devbox-secret
+              key: REDIS_PORT
         - name: REDIS_PASSWORD
           valueFrom:
             secretKeyRef:
@@ -66,6 +90,34 @@ spec:
             secretKeyRef:
               name: devbox-secret
               key: WORK_KEY
+        - name: NOMAD_ADDRESS
+          value: https://REPLACE_PROD_NOMAD_HOST:REPLACE_NOMAD_PORT
+        - name: MGMT_SERVICE_GRPC_TARGET
+          value: REPLACE_PROD_MGMT_HOST:REPLACE_MGMT_PORT
+        - name: MGMT_SERVICE_SERVER_NAME
+          value: REPLACE_MGMT_CERT_SAN
+        - name: RELAY_CONTROLLER_GRPC_TARGET
+          value: REPLACE_PROD_RELAY_HOST:REPLACE_RELAY_PORT
+        - name: RELAY_CONTROLLER_SERVER_NAME
+          value: REPLACE_RELAY_CERT_SAN
+        - name: SANDBOX_PROXY_DOMAIN
+          value: REPLACE_PROD_GATEWAY_DOMAIN
+        - name: CLIENT_CA_CERT_PATH
+          value: /etc/nomad/tls/ca.pem
+        - name: CLIENT_CERT_PATH
+          value: /etc/nomad/tls/client-cert.pem
+        - name: CLIENT_KEY_PATH
+          value: /etc/nomad/tls/client-key.pem
+        - name: GATEWAY_CLIENT_CA_PATH
+          value: /etc/devbox/gateway/ca.pem
+        - name: RELAY_CONTROLLER_CLIENT_CERT_PATH
+          value: /etc/relay/tls/client.crt
+        - name: RELAY_CONTROLLER_CLIENT_KEY_PATH
+          value: /etc/relay/tls/client.key
+        - name: TLS_CERT_PATH
+          value: /etc/devbox/tls/server.crt
+        - name: TLS_KEY_PATH
+          value: /etc/devbox/tls/server.key
         ports:
         - name: public-https
           containerPort: 8080

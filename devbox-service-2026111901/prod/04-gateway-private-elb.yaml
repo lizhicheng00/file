@@ -1,0 +1,24 @@
+# 仅在 Gateway 需要跨集群或跨网络连接时使用。填写目标生产私网 ELB ID。
+# TCP 8447 透传到 Pod 8445，Pod 完成双向 TLS。若已有同 ELB 的 8447 监听，切换其现有后端，避免重复创建。
+apiVersion: v1
+kind: Service
+metadata:
+  name: devbox-service-resume-inner
+  namespace: replace-prod-namespace
+  annotations:
+    kubernetes.io/elb.class: performance
+    kubernetes.io/elb.id: REPLACE_PROD_PRIVATE_ELB_ID
+    kubernetes.io/elb.health-check-flag: 'on'
+    kubernetes.io/elb.health-check-option: '{"protocol":"TCP","delay":"5","timeout":"10","max_retries":"3"}'
+    kubernetes.io/elb.lb-algorithm: ROUND_ROBIN
+    kubernetes.io/elb.security-pool-protocol: 'off'
+spec:
+  type: LoadBalancer
+  externalTrafficPolicy: Cluster
+  selector:
+    app: devbox-service
+  ports:
+  - name: grpc-resume
+    protocol: TCP
+    port: 8447
+    targetPort: 8445

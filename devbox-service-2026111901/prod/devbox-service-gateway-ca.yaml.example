@@ -1,0 +1,12 @@
+# 另存为 .yaml。将 ca.pem 的占位符替换为完整的 Nomad CA PEM 原文。
+# 测试 Manager 用 /etc/nomad/tls/ca.pem 验证 Gateway 客户端证书。
+# 生产 Gateway 继续使用由同一 CA 签发的客户端证书时，复用该 CA。
+apiVersion: v1
+kind: Secret
+metadata:
+  name: devbox-service-gateway-ca
+  namespace: devbox-infra
+type: Opaque
+stringData:
+  ca.pem: |
+    REPLACE_WITH_FULL_NOMAD_CA_PEM

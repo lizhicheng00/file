@@ -1,0 +1,31 @@
+# 使用支持 MGMT_SERVICE_CLIENT_* 的新镜像后，合并到现有 Deployment。
+# 在 CCE YAML 编辑器中追加 env、volumeMounts、volumes 的对应条目。
+# 也可用 kubectl patch deployment devbox-service -n devbox-infra --type=strategic --patch-file deployment-mgmt-tls.patch.yaml。
+spec:
+  template:
+    spec:
+      containers:
+      - name: devbox-service
+        env:
+        - name: MGMT_SERVICE_CLIENT_CA_CERT_PATH
+          value: /etc/devbox/mgmt/ca.pem
+        - name: MGMT_SERVICE_CLIENT_CERT_PATH
+          value: /etc/devbox/mgmt/client-cert.pem
+        - name: MGMT_SERVICE_CLIENT_KEY_PATH
+          value: /etc/devbox/mgmt/client-key.pem
+        volumeMounts:
+        - name: mgmt-client-tls
+          mountPath: /etc/devbox/mgmt
+          readOnly: true
+      volumes:
+      - name: mgmt-client-tls
+        secret:
+          secretName: devbox-service-mgmt-client-tls
+          defaultMode: 288
+          items:
+          - key: ca.pem
+            path: ca.pem
+          - key: client-cert.pem
+            path: client-cert.pem
+          - key: client-key.pem
+            path: client-key.pem

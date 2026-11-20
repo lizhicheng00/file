@@ -10,8 +10,8 @@ SELECT t.tunnel_id,
        p.port,
        p.protocol,
        p.allow_anonymous
-FROM tunnel AS t
-LEFT JOIN tunnel_port AS p ON p.tunnel_code = t.tunnel_code
+FROM t_tunnel AS t
+LEFT JOIN t_tunnel_port AS p ON p.tunnel_code = t.tunnel_code
 WHERE @devbox_tunnel_id <> ''
   AND t.tunnel_id = @devbox_tunnel_id
 ORDER BY p.port;

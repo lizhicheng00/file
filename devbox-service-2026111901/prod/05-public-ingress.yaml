@@ -1,0 +1,59 @@
+# 新建 DevBox API Ingress 时使用。填写生产 ELB ID 和 ELB 服务端证书 ID 后再创建。
+# host 填生产 API 域名。只有独占监听器且确实需要匹配任意域名时才留空。
+# 已有共享 443 Ingress 的场景，请以现有对象为基础更新 DevBox 后端。
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: devbox-service-public-443
+  namespace: devbox-infra
+  annotations:
+    kubernetes.io/elb.class: performance
+    kubernetes.io/elb.id: ''
+    kubernetes.io/elb.port: '443'
+    kubernetes.io/elb.protocol: HTTPS
+    kubernetes.io/elb.pool-protocol: https
+    kubernetes.io/elb.tls-certificate-ids: ''
+    kubernetes.io/elb.tls-ciphers-policy: tls-1-2
+    kubernetes.io/elb.x-forwarded-port: 'true'
+spec:
+  ingressClassName: cce
+  rules:
+  - host: ''
+    http:
+      paths:
+      - path: /templates
+        pathType: ImplementationSpecific
+        backend:
+          service:
+            name: devbox-service
+            port:
+              number: 8080
+        property:
+          ingress.beta.kubernetes.io/url-match-mode: STARTS_WITH
+      - path: /v2/templates
+        pathType: ImplementationSpecific
+        backend:
+          service:
+            name: devbox-service
+            port:
+              number: 8080
+        property:
+          ingress.beta.kubernetes.io/url-match-mode: STARTS_WITH
+      - path: /sandboxes
+        pathType: ImplementationSpecific
+        backend:
+          service:
+            name: devbox-service
+            port:
+              number: 8080
+        property:
+          ingress.beta.kubernetes.io/url-match-mode: STARTS_WITH
+      - path: /v2/sandboxes
+        pathType: ImplementationSpecific
+        backend:
+          service:
+            name: devbox-service
+            port:
+              number: 8080
+        property:
+          ingress.beta.kubernetes.io/url-match-mode: STARTS_WITH

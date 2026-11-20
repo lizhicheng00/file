@@ -2,6 +2,7 @@
 # 现有 devbox-secret 提供数据库配置和解密材料。现有各 TLS Secret 提供证书。
 # 当前按已确认可用的 amd64 镜像与单副本配置。服务启动会执行 MySQL 迁移。
 # Mgmt 独立 TLS 需要先在 devbox-infra 创建 devbox-service-mgmt-client-tls。
+# 更新前确认现有 devbox-service-relay-client-tls 已加入 ca.pem。
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -32,7 +33,7 @@ spec:
       - name: default-secret
       containers:
       - name: devbox-service
-        image: swr.cn-south-1.myhuaweicloud.com/cloud_devbox/devbox-service:1.0.0-2026112001.amd64
+        image: swr.cn-south-1.myhuaweicloud.com/cloud_devbox/devbox-service:1.0.0-2026112002.amd64
         securityContext:
           allowPrivilegeEscalation: false
           readOnlyRootFilesystem: true
@@ -110,6 +111,8 @@ spec:
           value: /etc/nomad/tls/client-key.pem
         - name: GATEWAY_CLIENT_CA_PATH
           value: /etc/devbox/gateway/ca.pem
+        - name: RELAY_CONTROLLER_CLIENT_CA_CERT_PATH
+          value: /etc/relay/tls/ca.pem
         - name: RELAY_CONTROLLER_CLIENT_CERT_PATH
           value: /etc/relay/tls/client.crt
         - name: RELAY_CONTROLLER_CLIENT_KEY_PATH
@@ -208,6 +211,8 @@ spec:
             path: client.crt
           - key: tls.key
             path: client.key
+          - key: ca.pem
+            path: ca.pem
       - name: mgmt-client-tls
         secret:
           secretName: devbox-service-mgmt-client-tls

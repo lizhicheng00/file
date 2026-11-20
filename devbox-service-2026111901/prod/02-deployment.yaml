@@ -1,14 +1,13 @@
-# 填同一生产命名空间、生产 SWR 镜像和 env 中的 REPLACE_*。已有 devbox-secret 提供数据库配置和解密材料。
-# 核对 default-secret 和各证书 Secret 的名称及键。beta 从 devbox-secret 挂载到 /opt/cloud/dog/beta。
-# 模板使用 amd64，按实际镜像和节点调整。生产库和凭据核验后把 replicas 调为 1。启动会执行 MySQL 迁移。
-# Nomad/Mgmt/Relay 使用同一 CA 信任包。Relay 如共用默认客户端身份，移除两个 RELAY_CONTROLLER_CLIENT_* 环境变量与对应挂载。
+# 本文件按测试集群的 Nomad、Mgmt 和 Relay 服务命名及证书 SAN 推定生产配置。
+# 现有 devbox-secret 提供数据库配置和解密材料。现有各 TLS Secret 提供证书。
+# 当前按已确认可用的 amd64 镜像与单副本配置。服务启动会执行 MySQL 迁移。
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  namespace: replace-prod-namespace
+  namespace: devbox-infra
   name: devbox-service
 spec:
-  replicas: 0
+  replicas: 1
   selector:
     matchLabels:
       app: devbox-service
@@ -32,7 +31,7 @@ spec:
       - name: default-secret
       containers:
       - name: devbox-service
-        image: REPLACE_PROD_SWR_IMAGE
+        image: swr.cn-south-1.myhuaweicloud.com/cloud_devbox/devbox-service:1.0.0-2026111901.amd64
         securityContext:
           allowPrivilegeEscalation: false
           readOnlyRootFilesystem: true
@@ -91,17 +90,17 @@ spec:
               name: devbox-secret
               key: WORK_KEY
         - name: NOMAD_ADDRESS
-          value: https://REPLACE_PROD_NOMAD_HOST:REPLACE_NOMAD_PORT
+          value: https://nomad:4646
         - name: MGMT_SERVICE_GRPC_TARGET
-          value: REPLACE_PROD_MGMT_HOST:REPLACE_MGMT_PORT
+          value: mgmt-service:8448
         - name: MGMT_SERVICE_SERVER_NAME
-          value: REPLACE_MGMT_CERT_SAN
+          value: nomad
         - name: RELAY_CONTROLLER_GRPC_TARGET
-          value: REPLACE_PROD_RELAY_HOST:REPLACE_RELAY_PORT
+          value: devbridge-service-grpc-8446.devbox-infra.svc.cluster.local:8446
         - name: RELAY_CONTROLLER_SERVER_NAME
-          value: REPLACE_RELAY_CERT_SAN
+          value: nomad
         - name: SANDBOX_PROXY_DOMAIN
-          value: REPLACE_PROD_GATEWAY_DOMAIN
+          value: devbox-{region}.hwtunnel.com
         - name: CLIENT_CA_CERT_PATH
           value: /etc/nomad/tls/ca.pem
         - name: CLIENT_CERT_PATH

@@ -1,0 +1,41 @@
+# CCE Ingress 片段。把下方 paths 中的条目合入现有生产 Ingress 的对应 rules[].http.paths。
+# 如果同路径已存在，只改它的 backend.service，避免重复规则。保留当前域名、ELB、TLS 和其他规则。
+# 生产 443 监听需以 HTTPS 协议连到 devbox-service ClusterIP Service 的 8080 端口。
+# 这是路由片段，不能通过 kubectl apply 单独创建 Ingress。
+paths:
+- path: /templates
+  pathType: ImplementationSpecific
+  backend:
+    service:
+      name: devbox-service
+      port:
+        number: 8080
+  property:
+    ingress.beta.kubernetes.io/url-match-mode: STARTS_WITH
+- path: /v2/templates
+  pathType: ImplementationSpecific
+  backend:
+    service:
+      name: devbox-service
+      port:
+        number: 8080
+  property:
+    ingress.beta.kubernetes.io/url-match-mode: STARTS_WITH
+- path: /sandboxes
+  pathType: ImplementationSpecific
+  backend:
+    service:
+      name: devbox-service
+      port:
+        number: 8080
+  property:
+    ingress.beta.kubernetes.io/url-match-mode: STARTS_WITH
+- path: /v2/sandboxes
+  pathType: ImplementationSpecific
+  backend:
+    service:
+      name: devbox-service
+      port:
+        number: 8080
+  property:
+    ingress.beta.kubernetes.io/url-match-mode: STARTS_WITH

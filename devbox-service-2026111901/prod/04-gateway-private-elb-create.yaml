@@ -1,0 +1,28 @@
+# 在生产 Manager 所在的 CCE 集群创建 Service 和私网独享型 ELB。
+# 将 PROD_ELB_AZ_CODE 换成生产区域支持的 ELB 可用区编码。
+# 默认使用 CCE 集群所在子网。需要指定 VIP 子网时，在 autocreate JSON 中
+# 增加 vip_subnet_cidr_id，取值是生产 Manager VPC 内的 IPv4 子网 ID。
+# 已有合适的生产内网 ELB 时，使用 04-gateway-private-elb.yaml 绑定，两份选一。
+# ELB 私网地址就绪后，Gateway 的 devbox.grpc.target 填该地址加 :8447。
+# Gateway 的 devbox.grpc.server.name 必须匹配生产 Manager 服务端证书 SAN。
+apiVersion: v1
+kind: Service
+metadata:
+  name: devbox-service-resume-inner
+  namespace: devbox-infra
+  annotations:
+    kubernetes.io/elb.class: performance
+    kubernetes.io/elb.autocreate: >-
+      {"name":"elb-control-inner-devbox-prod","type":"inner","available_zone":["PROD_ELB_AZ_CODE"],"l4_flavor_name":"L4_flavor.elb.s1.small"}
+    kubernetes.io/elb.health-check-flag: "on"
+    kubernetes.io/elb.health-check-option: '{"protocol":"TCP","delay":"5","timeout":"10","max_retries":"3"}'
+spec:
+  type: LoadBalancer
+  externalTrafficPolicy: Cluster
+  selector:
+    app: devbox-service
+  ports:
+    - name: grpc-resume
+      protocol: TCP
+      port: 8447
+      targetPort: gateway-grpc

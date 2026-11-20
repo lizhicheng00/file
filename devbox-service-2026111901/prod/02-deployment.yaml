@@ -1,6 +1,7 @@
 # 本文件按测试集群的 Nomad、Mgmt 和 Relay 服务命名及证书 SAN 推定生产配置。
 # 现有 devbox-secret 提供数据库配置和解密材料。现有各 TLS Secret 提供证书。
 # 当前按已确认可用的 amd64 镜像与单副本配置。服务启动会执行 MySQL 迁移。
+# Mgmt 独立 TLS 需要先在 devbox-infra 创建 devbox-service-mgmt-client-tls。
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -31,7 +32,7 @@ spec:
       - name: default-secret
       containers:
       - name: devbox-service
-        image: swr.cn-south-1.myhuaweicloud.com/cloud_devbox/devbox-service:1.0.0-2026111901.amd64
+        image: swr.cn-south-1.myhuaweicloud.com/cloud_devbox/devbox-service:1.0.0-2026112001.amd64
         securityContext:
           allowPrivilegeEscalation: false
           readOnlyRootFilesystem: true
@@ -117,6 +118,12 @@ spec:
           value: /etc/devbox/tls/server.crt
         - name: TLS_KEY_PATH
           value: /etc/devbox/tls/server.key
+        - name: MGMT_SERVICE_CLIENT_CA_CERT_PATH
+          value: /etc/devbox/mgmt/ca.pem
+        - name: MGMT_SERVICE_CLIENT_CERT_PATH
+          value: /etc/devbox/mgmt/client-cert.pem
+        - name: MGMT_SERVICE_CLIENT_KEY_PATH
+          value: /etc/devbox/mgmt/client-key.pem
         ports:
         - name: public-https
           containerPort: 8080
@@ -153,6 +160,9 @@ spec:
           readOnly: true
         - name: relay-client-tls
           mountPath: /etc/relay/tls
+          readOnly: true
+        - name: mgmt-client-tls
+          mountPath: /etc/devbox/mgmt
           readOnly: true
       volumes:
       - name: crypto-beta
@@ -198,3 +208,14 @@ spec:
             path: client.crt
           - key: tls.key
             path: client.key
+      - name: mgmt-client-tls
+        secret:
+          secretName: devbox-service-mgmt-client-tls
+          defaultMode: 288
+          items:
+          - key: ca.pem
+            path: ca.pem
+          - key: client-cert.pem
+            path: client-cert.pem
+          - key: client-key.pem
+            path: client-key.pem

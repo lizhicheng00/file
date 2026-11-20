@@ -19,10 +19,10 @@ ORDER BY TABLE_NAME;
 -- 修复前预期 port 为 BIGINT UNSIGNED NOT NULL、无默认值或额外属性。
 SHOW CREATE TABLE t_tunnel_port;
 
--- 必须为 0 才能缩到有符号 INT。0 是历史异常值，修复 SQL 会原样保留。
-SELECT COUNT(*) AS ports_outside_signed_int
+-- 必须为 0 才能改为有符号 BIGINT。0 是历史异常值，修复 SQL 会原样保留。
+SELECT COUNT(*) AS ports_outside_signed_bigint
 FROM t_tunnel_port
-WHERE port > 2147483647;
+WHERE port > 9223372036854775807;
 
 -- 新版 Bridge Service 的迁移版本。若该表不存在，核对生产镜像及旧迁移记录。
 SELECT version_id, is_applied, tstamp
